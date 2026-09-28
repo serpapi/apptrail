@@ -356,7 +356,8 @@ class Gateway:
         store = "App Store" if platform == "ios" else "Google Play"
         raise ProviderError(
             f"The {store} listing for {identifier} could not be verified in {country.upper()}. "
-            "Please try again."
+            "Please try again.",
+            retryable=not data.get("error"),
         )
 
     def search(self, spec):

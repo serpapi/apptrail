@@ -197,6 +197,7 @@ def test_product_rejects_listing_still_incomplete_after_refresh(platform, identi
         gateway.product(platform, identifier, "gb", "en")
 
     assert f"{store} listing for {identifier} could not be verified in GB" in str(caught.value)
+    assert caught.value.retryable
     assert len(gateway.requested) == 2
     assert gateway.requested[1] == {**gateway.requested[0], "no_cache": True}
 
@@ -217,9 +218,21 @@ def test_product_does_not_retry_explicit_provider_errors(monkeypatch):
             search=lambda **params: {"search_metadata": {"status": "Error"}, "error": "Not found"}
         ),
     )
-    with pytest.raises(ProviderError, match="Not found"):
+    with pytest.raises(ProviderError, match="Not found") as caught:
         gateway.product("ios", "572688855", "us", "en")
+    assert not caught.value.retryable
     assert gateway.requests_count == 1
+
+
+def test_product_does_not_schedule_retries_for_confirmed_no_results():
+    no_results = {
+        "search_metadata": {"status": "Success"},
+        "error": "Google Play hasn't returned any results for this query.",
+    }
+    gateway = ScriptedGateway([no_results, no_results])
+    with pytest.raises(ProviderError) as caught:
+        gateway.product("android", "com.example.missing", "us", "en")
+    assert not caught.value.retryable
 
 
 @pytest.mark.parametrize("operation", ["search", "search_error", "account_error"])

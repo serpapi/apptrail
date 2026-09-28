@@ -1,6 +1,7 @@
 """Live public-interface tests. Set SERPAPI_API_KEY and run pytest -m live -v."""
 
 import os
+import time
 
 import pytest
 from conftest import add_monitor
@@ -129,8 +130,26 @@ def test_live_listing_statistics_refresh(live_client):
     before = len(live_client.get("/api/dashboard").json()["profiles"])
     response = live_client.post(f"/api/apps/{app_id}/refresh")
     assert response.status_code == 200
-    for run_id in response.json()["run_ids"]:
-        assert live_client.app.state.worker.process_one()
-        run = live_client.get(f"/api/runs/{run_id}").json()
-        assert run["status"] == "success", run["error"]
+    pending = set(response.json()["run_ids"])
+    deadline = time.monotonic() + 180
+    while pending:
+        processed = live_client.app.state.worker.process_one()
+        for run_id in pending.copy():
+            run = live_client.get(f"/api/runs/{run_id}").json()
+            assert run["status"] in {"queued", "running", "success"}, {
+                "error": run["error"],
+                "searches": [
+                    {
+                        "search_id": item["data"].get("search_metadata", {}).get("id"),
+                        "status": item["data"].get("search_metadata", {}).get("status"),
+                        "fields": sorted(item["data"]),
+                    }
+                    for item in run["responses"]
+                ],
+            }
+            if run["status"] == "success":
+                pending.remove(run_id)
+        assert not pending or time.monotonic() < deadline, f"Refresh timed out: {sorted(pending)}"
+        if pending and not processed:
+            time.sleep(0.5)
     assert len(live_client.get("/api/dashboard").json()["profiles"]) == before + 2
