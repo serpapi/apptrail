@@ -27,6 +27,12 @@ jobs:
       - name: Run live tests with the repository secret
         run: |
           uv run python -c 'import os; assert os.getenv("SERPAPI_KEY"), "Configure the SERPAPI_KEY repository secret before running live tests."'
-          uv run pytest -m live -v --tb=short --strict-markers --durations=10
+          uv run pytest -m live -v --tb=short --strict-markers --durations=10 --basetemp=live-artifacts
         env:
           SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: live-serpapi-responses
+          path: live-artifacts/live-responses*/*.json
+          retention-days: 7

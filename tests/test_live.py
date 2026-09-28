@@ -1,5 +1,6 @@
 """Live public-interface tests. Set SERPAPI_API_KEY and run pytest -m live -v."""
 
+import json
 import os
 import time
 
@@ -125,7 +126,7 @@ def test_live_deeper_store_searches(live_client):
             assert outcome.result["pages"] == 2
 
 
-def test_live_listing_statistics_refresh(live_client):
+def test_live_listing_statistics_refresh(live_client, live_gateway_factory):
     app_id = live_client.get("/api/state").json()["apps"][0]["id"]
     before = len(live_client.get("/api/dashboard").json()["profiles"])
     response = live_client.post(f"/api/apps/{app_id}/refresh")
@@ -136,17 +137,34 @@ def test_live_listing_statistics_refresh(live_client):
         processed = live_client.app.state.worker.process_one()
         for run_id in pending.copy():
             run = live_client.get(f"/api/runs/{run_id}").json()
-            assert run["status"] in {"queued", "running", "success"}, {
-                "error": run["error"],
-                "searches": [
-                    {
-                        "search_id": item["data"].get("search_metadata", {}).get("id"),
-                        "status": item["data"].get("search_metadata", {}).get("status"),
-                        "fields": sorted(item["data"]),
-                    }
-                    for item in run["responses"]
-                ],
-            }
+            if run["status"] not in {"queued", "running", "success"}:
+                pytest.fail(
+                    json.dumps(
+                        {
+                            "error": run["error"],
+                            "params": run["params"],
+                            "product_searches_including_onboarding": [
+                                {
+                                    "params": item["params"],
+                                    **{
+                                        key: item["data"].get(key)
+                                        for key in (
+                                            "search_metadata",
+                                            "search_parameters",
+                                            "search_information",
+                                            "error",
+                                        )
+                                    },
+                                    "fields": sorted(item["data"]),
+                                }
+                                for item in live_gateway_factory.recorded
+                                if item["params"].get("engine")
+                                in {"apple_product", "google_play_product"}
+                            ],
+                        },
+                        indent=2,
+                    )
+                )
             if run["status"] == "success":
                 pending.remove(run_id)
         assert not pending or time.monotonic() < deadline, f"Refresh timed out: {sorted(pending)}"

@@ -354,9 +354,10 @@ class Gateway:
             if listing:
                 return listing
         store = "App Store" if platform == "ios" else "Google Play"
+        detail = f"SerpApi: {data['error']}" if data.get("error") else "Please try again."
         raise ProviderError(
             f"The {store} listing for {identifier} could not be verified in {country.upper()}. "
-            "Please try again.",
+            f"{detail}",
             retryable=not data.get("error"),
         )
 

@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -7,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apptrail.api import create_app
-from apptrail.engines import ProviderError, SearchOutcome, canonical_url
+from apptrail.engines import Gateway, ProviderError, SearchOutcome, canonical_url
 
 
 class FakeGateway:
@@ -147,11 +148,38 @@ def discover_live_app(client):
 
 
 @pytest.fixture(scope="session")
-def live_app_database(tmp_path_factory):
+def live_gateway_factory(tmp_path_factory):
     if not (os.getenv("SERPAPI_API_KEY") or os.getenv("SERPAPI_KEY")):
         pytest.skip("Set SERPAPI_API_KEY for live integration checks.")
+    directory = tmp_path_factory.mktemp("live-responses")
+
+    class RecordedGateway(Gateway):
+        recorded = []
+
+        def request(self, **params):
+            previous = len(self.responses)
+            try:
+                return super().request(**params)
+            finally:
+                # Gateway responses are already sanitized. Include onboarding requests,
+                # which are not saved in a run, so CI failures can be compared to them.
+                for response in self.responses[previous:]:
+                    self.recorded.append(response)
+                    (directory / f"{len(self.recorded):03d}.json").write_text(
+                        json.dumps(response, indent=2), encoding="utf-8"
+                    )
+
+    return RecordedGateway
+
+
+@pytest.fixture(scope="session")
+def live_app_database(tmp_path_factory, live_gateway_factory):
     with TestClient(
-        create_app(tmp_path_factory.mktemp("live-template"), start_worker=False)
+        create_app(
+            tmp_path_factory.mktemp("live-template"),
+            start_worker=False,
+            gateway_factory=live_gateway_factory,
+        )
     ) as client:
         sign_in(client)
         discover_live_app(client)
@@ -161,7 +189,7 @@ def live_app_database(tmp_path_factory):
 
 
 @pytest.fixture
-def live_client(tmp_path, live_app_database, request):
+def live_client(tmp_path, live_app_database, live_gateway_factory, request):
     setting = (
         "APPTRAIL_REGIONAL_TEST_DIR"
         if request.module.__name__ == "test_regions_live"
@@ -174,6 +202,8 @@ def live_client(tmp_path, live_app_database, request):
     else:
         directory = tmp_path
     (directory / "apptrail.sqlite3").write_bytes(live_app_database)
-    with TestClient(create_app(directory, start_worker=False)) as client:
+    with TestClient(
+        create_app(directory, start_worker=False, gateway_factory=live_gateway_factory)
+    ) as client:
         sign_in(client)
         yield client

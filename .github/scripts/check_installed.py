@@ -15,6 +15,9 @@ from pathlib import Path
 import apptrail
 
 checkout = Path(__file__).resolve().parents[2]
+assert Path(apptrail.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), (
+    "This smoke check must import apptrail from its isolated installation."
+)
 assert not Path(apptrail.__file__).resolve().is_relative_to(checkout / "src"), (
     "This smoke check must run against the installed wheel, not an editable checkout."
 )

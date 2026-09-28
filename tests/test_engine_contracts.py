@@ -224,15 +224,24 @@ def test_product_does_not_retry_explicit_provider_errors(monkeypatch):
     assert gateway.requests_count == 1
 
 
-def test_product_does_not_schedule_retries_for_confirmed_no_results():
+def test_product_preserves_no_results_error_without_leaking_credentials(monkeypatch):
+    key = "test-only-private-key"
     no_results = {
         "search_metadata": {"status": "Success"},
-        "error": "Google Play hasn't returned any results for this query.",
+        "error": f"Google Play hasn't returned any results for this query. api_key={key}",
     }
-    gateway = ScriptedGateway([no_results, no_results])
+    gateway = Gateway(SimpleNamespace(api_key=key))
+    monkeypatch.setattr(
+        gateway, "client", lambda key: SimpleNamespace(search=lambda **params: no_results)
+    )
     with pytest.raises(ProviderError) as caught:
         gateway.product("android", "com.example.missing", "us", "en")
     assert not caught.value.retryable
+    assert "Google Play hasn't returned any results for this query." in str(caught.value)
+    assert "Please try again" not in str(caught.value)
+    assert key not in str(caught.value)
+    assert key not in str(gateway.responses)
+    assert gateway.requests_count == 2
 
 
 @pytest.mark.parametrize("operation", ["search", "search_error", "account_error"])
