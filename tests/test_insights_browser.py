@@ -95,8 +95,9 @@ def test_distribution_opens_matching_queries_and_country_matrix(
     page.screenshot(path=str(tmp_path / "matrix.png"), animations="disabled")
 
 
+@pytest.mark.parametrize("delayed_endpoint", [None, "state", "dashboard?*"])
 def test_closing_notifications_during_mark_read_does_not_reopen_dialog(
-    client, tracked, browser_page
+    client, tracked, browser_page, delayed_endpoint
 ):
     add_monitor(client, tracked)
     assert client.app.state.worker.process_one()
@@ -116,9 +117,25 @@ def test_closing_notifications_during_mark_read_does_not_reopen_dialog(
             )
         )
     page, url = browser_page
-    login(page, url)
+    if delayed_endpoint:
+        startup_requests = []
+        startup_url = "**/api/" + delayed_endpoint
+        page.route(startup_url, lambda route: startup_requests.append(route))
+        with page.expect_request(startup_url):
+            login(page, url)
+        try:
+            expect(page.locator("#notification-bell")).to_be_disabled()
+            expect(page.locator("#modal")).to_be_hidden()
+        finally:
+            assert len(startup_requests) == 1
+            with page.expect_response(startup_url):
+                startup_requests[0].continue_()
+            page.unroute(startup_url)
+    else:
+        login(page, url)
     page.locator("#notification-bell").click()
     expect(page.locator(".notification-item")).to_be_visible()
+    expect(page.locator(".notification-item")).to_contain_text("Todo Example lost ranking")
     held_requests = []
     page.route("**/api/notifications/read", lambda route: held_requests.append(route))
     with page.expect_request("**/api/notifications/read"):

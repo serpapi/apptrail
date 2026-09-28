@@ -1149,10 +1149,12 @@ function render() {
     a.classList.toggle("active", a.dataset.nav === route()),
   );
   $("#breadcrumb").textContent = labels[route()];
-  const unread = state.notification_unread || 0;
+  const unread = state.notification_unread || 0,
+    notificationBell = $("#notification-bell");
+  notificationBell.disabled = isLoading(notificationBell);
   $("#notification-count").textContent = unread > 99 ? "99+" : unread;
   $("#notification-count").hidden = !unread;
-  $("#notification-bell").setAttribute(
+  notificationBell.setAttribute(
     "aria-label",
     `Notifications${unread ? `, ${unread} unread` : ""}`,
   );
