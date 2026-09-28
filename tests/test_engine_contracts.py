@@ -161,6 +161,65 @@ def test_product_rejects_different_identifier_even_when_title_matches():
     gateway = ScriptedGateway([{"id": "999", "title": "Todoist: To Do List & Calendar"}])
     with pytest.raises(ProviderError, match="different app identifier"):
         gateway.product("ios", "572688855", "us", "en")
+    assert len(gateway.requested) == 1
+
+
+@pytest.mark.parametrize("platform,identifier", [("ios", "572688855"), ("android", "com.todoist")])
+def test_product_retries_incomplete_response_without_cache(monkeypatch, platform, identifier):
+    info = {"title": "Todoist: To Do List & Calendar", "rating": 4.8}
+    complete = info if platform == "ios" else {"product_info": info}
+    responses = iter([{"search_metadata": {"status": "Success"}}, complete])
+    gateway = Gateway(SimpleNamespace(api_key="test"))
+    monkeypatch.setattr(
+        gateway, "client", lambda key: SimpleNamespace(search=lambda **params: next(responses))
+    )
+
+    listing = gateway.product(platform, identifier, "gb", "en")
+
+    assert listing["external_id"] == identifier
+    assert listing["title"] == info["title"]
+    assert listing["metadata_json"]["rating"] == 4.8
+    assert listing["country"] == "gb"
+    assert gateway.requests_count == 2
+    original, retried = [response["params"] for response in gateway.responses]
+    assert "no_cache" not in original
+    assert retried == {**original, "no_cache": True}
+
+
+@pytest.mark.parametrize(
+    "platform,identifier,store",
+    [("ios", "572688855", "App Store"), ("android", "com.todoist", "Google Play")],
+)
+def test_product_rejects_listing_still_incomplete_after_refresh(platform, identifier, store):
+    gateway = ScriptedGateway([{}, {}])
+
+    with pytest.raises(ProviderError) as caught:
+        gateway.product(platform, identifier, "gb", "en")
+
+    assert f"{store} listing for {identifier} could not be verified in GB" in str(caught.value)
+    assert len(gateway.requested) == 2
+    assert gateway.requested[1] == {**gateway.requested[0], "no_cache": True}
+
+
+def test_product_refresh_still_rejects_different_identifier():
+    gateway = ScriptedGateway([{}, {"id": "999", "title": "Todoist: To Do List & Calendar"}])
+    with pytest.raises(ProviderError, match="different app identifier"):
+        gateway.product("ios", "572688855", "us", "en")
+    assert len(gateway.requested) == 2
+
+
+def test_product_does_not_retry_explicit_provider_errors(monkeypatch):
+    gateway = Gateway(SimpleNamespace(api_key="test"))
+    monkeypatch.setattr(
+        gateway,
+        "client",
+        lambda key: SimpleNamespace(
+            search=lambda **params: {"search_metadata": {"status": "Error"}, "error": "Not found"}
+        ),
+    )
+    with pytest.raises(ProviderError, match="Not found"):
+        gateway.product("ios", "572688855", "us", "en")
+    assert gateway.requests_count == 1
 
 
 @pytest.mark.parametrize("operation", ["search", "search_error", "account_error"])

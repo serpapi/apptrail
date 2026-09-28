@@ -342,14 +342,22 @@ class Gateway:
             if platform == "ios"
             else {"gl": country, "hl": language, "store": "apps"}
         )
-        data = self.request(**params)
-        returned_id = data.get("id") or data.get("product_id")
-        if returned_id and str(returned_id) != identifier:
-            raise ProviderError("The store returned a different app identifier.")
-        listing = normalize_listing(data, platform, country, language, identifier)
-        if not listing:
-            raise ProviderError("The app listing is not available in this market.")
-        return listing
+        for refresh in (False, True):
+            if refresh:
+                # An incomplete response may be cached; retry once with a fresh lookup.
+                params["no_cache"] = True
+            data = self.request(**params)
+            returned_id = data.get("id") or data.get("product_id")
+            if returned_id and str(returned_id) != identifier:
+                raise ProviderError("The store returned a different app identifier.")
+            listing = normalize_listing(data, platform, country, language, identifier)
+            if listing:
+                return listing
+        store = "App Store" if platform == "ios" else "Google Play"
+        raise ProviderError(
+            f"The {store} listing for {identifier} could not be verified in {country.upper()}. "
+            "Please try again."
+        )
 
     def search(self, spec):
         source = spec["source"]
