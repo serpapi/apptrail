@@ -1,5 +1,9 @@
 # AppTrail
 
+[![PyPI version](https://img.shields.io/pypi/v/apptrail?logo=pypi&logoColor=white)](https://pypi.org/project/apptrail/)
+[![Docker image version](https://img.shields.io/docker/v/serpapi/apptrail?sort=semver&logo=docker&logoColor=white&label=Docker)](https://hub.docker.com/r/serpapi/apptrail)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/serpapi/apptrail/blob/main/LICENSE)
+
 **Open-source app visibility tracking across the App Store, Google Play, and AI search.**
 
 ![AppTrail dashboard](https://raw.githubusercontent.com/serpapi/apptrail/main/docs/images/apptrail-banner.png)
