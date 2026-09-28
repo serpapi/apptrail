@@ -1,0 +1,84 @@
+name: Publish to PyPI
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+concurrency:
+  group: pypi-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the release commit belongs to main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::The release tag must point to a commit on main."
+            exit 1
+          fi
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: Verify the release tag matches the package version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          uv run python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          from apptrail import __version__
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          expected = f"v{version}"
+          if os.environ["RELEASE_TAG"] != expected:
+              raise SystemExit(f"Release tag must be {expected} to match pyproject.toml.")
+          if __version__ != version:
+              raise SystemExit("src/apptrail/__init__.py must match the package version.")
+          PY
+      - run: uv run pytest -m "not live and not browser" --strict-markers --durations=10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test tests/*.test.mjs
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest -m browser --strict-markers --durations=10
+        env:
+          APPTRAIL_BROWSER_TESTS: "1"
+          APPTRAIL_BROWSER_CHANNEL: ""
+      - run: uv build
+      - run: uv run --isolated --no-project --with ./dist/*.whl python .github/scripts/check_installed.py
+      - run: uv run --isolated --no-project --with ./dist/*.tar.gz python .github/scripts/check_installed.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: pypi
+      url: https://pypi.org/project/apptrail/
+    permissions:
+      id-token: write
+    steps:
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+      - run: uv publish --trusted-publishing always

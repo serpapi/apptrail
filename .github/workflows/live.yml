@@ -1,0 +1,32 @@
+name: Live SerpApi integration tests
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: live-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  live:
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: Run live tests with the repository secret
+        run: |
+          uv run python -c 'import os; assert os.getenv("SERPAPI_KEY"), "Configure the SERPAPI_KEY repository secret before running live tests."'
+          uv run pytest -m live -v --tb=short --strict-markers --durations=10
+        env:
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}

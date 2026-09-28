@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Sign in · AppTrail</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/auth.css" />
+    <script type="module" src="/static/auth.js"></script>
+  </head>
+  <body class="auth-page">
+    <main class="auth-card">
+      <div class="auth-brand">
+        <img src="/static/favicon.svg" alt="" width="34" height="34" />AppTrail.
+      </div>
+      <h1 id="auth-title">Sign in to AppTrail</h1>
+      <p id="auth-description">Access your apps and search history.</p>
+      <p id="auth-loading" role="status">Loading…</p>
+      <form id="auth-form" hidden>
+        <div id="setup-fields" hidden>
+          <label class="field"
+            ><span>Setup code</span
+            ><input
+              class="input"
+              name="setup_token"
+              autocomplete="off"
+              maxlength="200"
+              aria-describedby="setup-help"
+          /></label>
+          <p id="setup-help" class="auth-help">
+            Use the one-time code printed in the AppTrail server terminal. For
+            Docker, find it in the container logs.
+          </p>
+        </div>
+        <label class="field"
+          ><span>Username</span
+          ><input
+            class="input"
+            name="username"
+            autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+            maxlength="64"
+            required
+        /></label>
+        <label class="field"
+          ><span>Password</span
+          ><input
+            class="input"
+            type="password"
+            name="password"
+            autocomplete="current-password"
+            maxlength="128"
+            aria-describedby="password-help"
+            required
+        /></label>
+        <p id="password-help" class="auth-help" hidden>
+          Use 8 to 128 characters, including a number and a special character.
+        </p>
+        <label class="field" id="confirm-field" hidden
+          ><span>Confirm password</span
+          ><input
+            class="input"
+            type="password"
+            name="confirm_password"
+            autocomplete="new-password"
+            maxlength="128"
+        /></label>
+        <p id="auth-error" class="error-message" role="alert"></p>
+        <button class="button primary" id="auth-submit" type="submit">
+          Sign in
+        </button>
+        <p id="auth-recovery" class="auth-help">
+          Forgot your password? Reset it from the server terminal with
+          <code>apptrail --reset-password</code>.
+        </p>
+      </form>
+      <noscript>Enable JavaScript to sign in to AppTrail.</noscript>
+    </main>
+  </body>
+</html>

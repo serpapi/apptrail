@@ -1,0 +1,75 @@
+name: Tests and package
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: macos-latest
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run pytest -m "not live and not browser" --strict-markers --durations=10
+      - run: uv run ruff check src tests .github/scripts
+      - run: uv run ruff format --check src tests .github/scripts
+      - run: uv build
+      - name: Check packaged UI and migrations
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          wheel = next(Path("dist").glob("*.whl"))
+          with ZipFile(wheel) as archive:
+              for name in ("static/auth.html", "static/auth.js", "static/auth.css", "auth.py", "regions.json", "static/index.html", "static/style.css", "static/app.js", "static/history-chart.js", "static/tracking.js", "static/insights-data.js", "static/insights-ui.js", "static/favicon.svg", "static/vendor/chart.umd.min.js", "static/vendor/chart-LICENSE.md", "static/vendor/lucide-icons.js", "static/vendor/lucide-LICENSE.txt", "migrations/001_initial.sql"):
+                  assert archive.read(f"apptrail/{name}"), name
+              license_name = next(name for name in archive.namelist() if name.endswith(".dist-info/licenses/LICENSE"))
+              assert archive.read(license_name)
+          PY
+      - run: uvx --from ./dist/*.whl apptrail --version
+      - run: uv run --isolated --no-project --with ./dist/*.whl python .github/scripts/check_installed.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions-${{ matrix.os }}-${{ matrix.python }}
+          path: dist/*
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test tests/*.test.mjs
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest -m browser --strict-markers --durations=10 --basetemp=browser-artifacts
+        env:
+          APPTRAIL_BROWSER_TESTS: "1"
+          APPTRAIL_BROWSER_CHANNEL: ""
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-artifacts
+          path: browser-artifacts/**/*.png

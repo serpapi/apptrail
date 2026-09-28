@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Your app's visibility, across stores and AI search. Track rankings, AI mentions, and the evidence behind them."
+    />
+    <meta name="theme-color" content="#313131" />
+    <title>AppTrail · App visibility tracking</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script defer src="/static/vendor/chart.umd.min.js"></script>
+    <script type="module" src="/static/app.js"></script>
+  </head>
+  <body>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <a class="brand" href="#overview" aria-label="AppTrail overview"
+          ><img
+            src="/static/favicon.svg"
+            alt=""
+            width="34"
+            height="34"
+          />AppTrail<span class="brand-dot">.</span></a
+        ><button
+          class="icon-button sidebar-close"
+          data-action="close-menu"
+          aria-label="Hide sidebar"
+          title="Hide sidebar"
+        >
+          <span data-icon="collapse-sidebar"></span>
+        </button>
+      </div>
+      <div class="workspace-label">YOUR WORKSPACE</div>
+      <nav aria-label="Main navigation">
+        <a href="#overview" data-nav="overview"
+          ><span data-icon="overview"></span>Overview</a
+        >
+        <a href="#apps" data-nav="apps"
+          ><span data-icon="apps"></span>Apps &amp; competitors<span
+            class="nav-count"
+            id="app-count"
+            >0</span
+          ></a
+        >
+        <div class="nav-label">VISIBILITY</div>
+        <a href="#rankings" data-nav="rankings"
+          ><span data-icon="chart"></span>Store rankings</a
+        >
+        <a href="#ai" data-nav="ai"
+          ><span data-icon="sparkles"></span>AI visibility</a
+        >
+        <a href="#listing-history" data-nav="listing-history"
+          ><span data-icon="history"></span>Listing history</a
+        >
+        <a href="#activity" data-nav="activity"
+          ><span data-icon="activity"></span>Activity</a
+        >
+        <div class="nav-divider"></div>
+        <a href="#settings" data-nav="settings"
+          ><span data-icon="settings"></span>Settings</a
+        >
+      </nav>
+      <div class="sidebar-bottom">
+        <button
+          class="credit-mini"
+          id="credit-mini"
+          data-action="search-summary"
+          aria-haspopup="dialog"
+          disabled
+        >
+          <span id="query-count">Loading queries…</span
+          ><span data-icon="arrow"></span>
+        </button>
+        <a
+          class="powered"
+          href="https://serpapi.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Powered by <strong>SerpApi</strong></a
+        >
+        <a
+          class="version"
+          id="version"
+          href="https://github.com/serpapi/apptrail"
+          target="_blank"
+          rel="noopener noreferrer"
+          ><span id="version-label">OPEN SOURCE · SELF HOSTED</span
+          ><span data-icon="external"></span
+        ></a>
+      </div>
+    </aside>
+    <button
+      class="navigation-backdrop"
+      data-action="close-menu"
+      aria-label="Close navigation overlay"
+      tabindex="-1"
+      hidden
+    ></button>
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button
+            class="icon-button mobile-menu"
+            data-action="menu"
+            aria-label="Toggle navigation"
+            aria-controls="sidebar"
+            aria-expanded="false"
+          >
+            <span data-icon="menu"></span></button
+          ><span class="breadcrumb"
+            >Workspace <span>/</span>
+            <strong id="breadcrumb">Overview</strong></span
+          >
+        </div>
+        <div class="topbar-right">
+          <button
+            class="icon-button notification-bell"
+            id="notification-bell"
+            data-action="notifications"
+            aria-label="Notifications"
+            aria-haspopup="dialog"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path
+                d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"
+              /></svg
+            ><span id="notification-count" hidden></span>
+          </button>
+          <button class="button small" data-action="logout">Sign out</button>
+        </div>
+      </header>
+      <section
+        class="search-progress"
+        id="search-progress"
+        aria-label="Search progress"
+        hidden
+      >
+        <span class="search-progress-icon" aria-hidden="true"></span>
+        <div
+          class="search-progress-copy"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <strong id="search-progress-title"></strong>
+          <span id="search-progress-detail"></span>
+        </div>
+        <a
+          id="search-progress-action"
+          class="text-link"
+          href="#activity"
+          data-action="summary-route"
+          data-route="activity"
+          ><span id="search-progress-action-label">View activity</span>
+          <span data-icon="arrow"></span
+        ></a>
+        <button
+          class="icon-button"
+          data-action="dismiss-progress"
+          aria-label="Dismiss completed checks"
+          hidden
+        >
+          <span data-icon="close"></span>
+        </button>
+      </section>
+      <main id="main" tabindex="-1">
+        <div class="loading-page">Opening your workspace…</div>
+      </main>
+    </div>
+    <dialog id="modal" aria-labelledby="modal-title">
+      <div id="modal-content"></div>
+    </dialog>
+    <div
+      class="toast-region"
+      id="toasts"
+      role="status"
+      aria-live="polite"
+    ></div>
+  </body>
+</html>

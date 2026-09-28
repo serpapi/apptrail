@@ -1,0 +1,12 @@
+services:
+  apptrail:
+    build: .
+    ports:
+      - "80:80"
+    volumes:
+      - apptrail-data:/data
+    restart: unless-stopped
+    stop_grace_period: 6m
+
+volumes:
+  apptrail-data:
