@@ -2017,6 +2017,18 @@ tbody tr:hover {
   padding: 24px;
   margin-bottom: 20px;
 }
+.key-missing-banner {
+  border-left: 4px solid var(--red);
+}
+.key-missing-banner strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.key-missing-banner a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .settings-panel h2 {
   margin-bottom: 7px;
 }

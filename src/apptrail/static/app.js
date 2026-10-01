@@ -979,6 +979,14 @@ async function restoreBackup(form) {
     if ($("#restore-status")) $("#restore-status").textContent = "";
   }
 }
+function missingKeyBanner() {
+  if (
+    state.configured ||
+    (!state.apps.length && state.onboarding?.visible !== false)
+  )
+    return "";
+  return `<div class="notice error key-missing-banner" role="status"><strong>SerpApi API key missing</strong><span>A SerpApi key is required to run checks. <a href="https://serpapi.com/manage-api-key" target="_blank" rel="noopener noreferrer">Get your key from Manage API Key</a>, then add it in <a href="#settings">Settings</a>.</span></div>`;
+}
 function settingsPage() {
   const a = state.account?.data || {},
     estimate = state.estimated_monthly;
@@ -1285,7 +1293,8 @@ function render() {
   $("#app-count").textContent = state.apps.filter((a) => !a.archived).length;
   $("#version-label").textContent = `OPEN SOURCE · v${state.version}`;
   $("#main").innerHTML =
-    !state.apps.length && route() !== "settings"
+    missingKeyBanner() +
+    (!state.apps.length && route() !== "settings"
       ? welcome()
       : {
           overview,
@@ -1295,7 +1304,7 @@ function render() {
           activity: activityPage,
           "listing-history": insights.listingPage,
           settings: settingsPage,
-        }[route()]();
+        }[route()]());
   $$("[data-width]").forEach(
     (el) => (el.style.width = `${Number(el.dataset.width)}%`),
   );
