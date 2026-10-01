@@ -1,3 +1,3 @@
 """App visibility tracking, on your own machine."""
 
-__version__ = "0.4.1"
+__version__ = "1.0.0"

@@ -77,8 +77,8 @@ Never commit keys, credentials, `.env` files, databases, or unredacted provider 
 
 ```bash
 uv build
-uvx --from ./dist/apptrail-0.4.1-py3-none-any.whl apptrail --version
-uvx --from ./dist/apptrail-0.4.1-py3-none-any.whl apptrail --no-browser
+uvx --from ./dist/apptrail-1.0.0-py3-none-any.whl apptrail --version
+uvx --from ./dist/apptrail-1.0.0-py3-none-any.whl apptrail --no-browser
 ```
 
 The wheel includes the static UI. Verify it from outside the checkout. The command's data directory is independent of the installed package and uv tool cache.
@@ -140,7 +140,7 @@ The workflow name is the filename, without `.github/workflows/`. If the project 
 
 1. Update `pyproject.toml` and `src/apptrail/__init__.py` to the same version, then run `uv lock` to update `uv.lock`.
 2. Merge those changes and the workflows into `main`, and wait for the CI and live test workflows to pass.
-3. Create and publish a GitHub Release with a tag of `v<version>` targeting `main`, for example `v0.4.1` for package version `0.4.1`. Use a version that has not already been published to PyPI.
+3. Create and publish a GitHub Release with a tag of `v<version>` targeting `main`, for example `v1.0.0` for package version `1.0.0`. Use a version that has not already been published to PyPI.
 
 The [Publish to PyPI workflow](https://github.com/serpapi/apptrail/actions/workflows/publish.yml) starts when the release is published, including published prereleases. Saving a draft or pushing a tag alone does not publish a package. Tags without a `v` prefix are ignored; mismatched versions and commits outside `main` fail validation. The workflow reruns Python, JavaScript, and Chromium tests, builds with `uv build`, and smoke-tests both the wheel and source distribution before uploading those artifacts to PyPI. Live tests run separately and are not a publishing-job dependency.
 

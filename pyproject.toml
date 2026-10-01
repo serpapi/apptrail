@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "apptrail"
-version = "0.4.1"
+version = "1.0.0"
 description = "Open-source app visibility tracking across the App Store, Google Play, and AI search."
 readme = "README.md"
 requires-python = ">=3.11"
