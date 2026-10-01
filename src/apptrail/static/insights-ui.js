@@ -365,10 +365,15 @@ export function createInsightsUI(ctx) {
     );
   }
 
-  function mediaImage(item, alt) {
-    return item?.asset_id
-      ? `<img src="/api/listing-assets/${esc(item.asset_id)}" alt="${esc(alt)}" loading="lazy">`
-      : '<div class="unavailable-image">Image could not be archived</div>';
+  function mediaImage(item, alt, snapshot) {
+    if (item?.asset_id && !snapshot?.missing_assets?.includes(item.asset_id))
+      return `<img src="/api/listing-assets/${esc(item.asset_id)}" alt="${esc(alt)}" loading="lazy">`;
+    const reason = item?.asset_id && snapshot?.images_omitted
+      ? "Image omitted from backup to save space"
+      : item?.asset_id && snapshot?.images_cleaned
+        ? "Image deleted during storage cleanup"
+        : "Archived image unavailable";
+    return `<div class="unavailable-image">${reason}</div>`;
   }
   async function showSnapshot(id) {
     const request = ++requestVersion;
@@ -400,17 +405,17 @@ export function createInsightsUI(ctx) {
       let left, right;
       if (field === "icon") {
         left = a
-          ? mediaImage(a, "Previous app icon")
+          ? mediaImage(a, "Previous app icon", before)
           : '<span class="muted">No previous icon</span>';
         right = b
-          ? mediaImage(b, "Current app icon")
+          ? mediaImage(b, "Current app icon", after)
           : '<span class="muted">No icon</span>';
       } else if (field.endsWith("screenshots")) {
         const old = a || [],
           next = b || [],
           annotated = mediaChanges(old, next);
-        left = `<div class="screenshot-strip">${old.map((item, i) => `<figure>${mediaImage(item, `Previous screenshot ${i + 1}`)}<figcaption>${i + 1} · ${next.some((n) => sameMedia(n, item)) ? "Previous" : "Removed"}</figcaption></figure>`).join("") || '<span class="muted">No screenshots</span>'}</div>`;
-        right = `<div class="screenshot-strip">${annotated.map((item, i) => `<figure>${mediaImage(item, `Current screenshot ${i + 1}`)}<figcaption class="${item.label === "Added" ? "up" : ""}">${i + 1} · ${item.label}</figcaption></figure>`).join("") || '<span class="muted">No screenshots</span>'}</div>`;
+        left = `<div class="screenshot-strip">${old.map((item, i) => `<figure>${mediaImage(item, `Previous screenshot ${i + 1}`, before)}<figcaption>${i + 1} · ${next.some((n) => sameMedia(n, item)) ? "Previous" : "Removed"}</figcaption></figure>`).join("") || '<span class="muted">No screenshots</span>'}</div>`;
+        right = `<div class="screenshot-strip">${annotated.map((item, i) => `<figure>${mediaImage(item, `Current screenshot ${i + 1}`, after)}<figcaption class="${item.label === "Added" ? "up" : ""}">${i + 1} · ${item.label}</figcaption></figure>`).join("") || '<span class="muted">No screenshots</span>'}</div>`;
       } else {
         const diff = textDiff(a ?? "", b ?? "");
         const text = (parts, tag) =>
@@ -429,7 +434,7 @@ export function createInsightsUI(ctx) {
       before
         ? `${when(before.checked_at)} → ${when(after.checked_at)}`
         : when(after.checked_at),
-      `<div class="diff-legend">${before ? '<span><i class="removed-key"></i>Removed</span><span><i class="added-key"></i>Added</span>' : "Baseline saved. Future changes will be compared with this listing."}<span>Archived images · saved text</span></div>${before ? `<div class="diff-column-head"><span>BEFORE <small>${when(before.checked_at)}</small></span><span>AFTER <small>${when(after.checked_at)}</small></span></div>` : ""}${fields.map(fieldView).join("") || '<div class="insight-empty">No listing changes in this check.</div>'}`,
+      `${before?.images_omitted || after.images_omitted ? '<p class="notice backup-omission">Listing-history images were omitted from this backup to save space. Saved text and image-change records are still available.</p>' : before?.images_cleaned || after.images_cleaned ? '<p class="notice storage-omission">Older listing-history images were deleted during storage cleanup. Saved text and image-change records are still available.</p>' : ""}<div class="diff-legend">${before ? '<span><i class="removed-key"></i>Removed</span><span><i class="added-key"></i>Added</span>' : "Baseline saved. Future changes will be compared with this listing."}<span>Saved listing history</span></div>${before ? `<div class="diff-column-head"><span>BEFORE <small>${when(before.checked_at)}</small></span><span>AFTER <small>${when(after.checked_at)}</small></span></div>` : ""}${fields.map(fieldView).join("") || '<div class="insight-empty">No listing changes in this check.</div>'}`,
     );
     modal.dataset.view = "listing-diff";
   }

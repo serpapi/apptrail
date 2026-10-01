@@ -10,7 +10,8 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from PIL import Image, ImageOps
 from sqlalchemy import select
 
-from .db import App, Listing, ListingAsset, ListingSnapshot, ListingWatch, Run, now
+from .db import App, Listing, ListingAsset, ListingSnapshot, ListingWatch, Run, backup_omits, now
+from .storage import removed_by_cleanup
 
 MEDIA_FIELDS = {
     "icon",
@@ -362,7 +363,39 @@ class ListingHistory:
                 .order_by(ListingSnapshot.id.desc())
                 .limit(1)
             )
+
+            def with_image_availability(item):
+                if item is None:
+                    return None
+                asset_ids = set()
+                for field in MEDIA_FIELDS:
+                    value = item.data.get(field)
+                    refs = [value] if field == "icon" else value or []
+                    asset_ids.update(
+                        ref["asset_id"]
+                        for ref in refs
+                        if isinstance(ref, dict) and ref.get("asset_id")
+                    )
+                available = (
+                    set(
+                        session.scalars(
+                            select(ListingAsset.id).where(ListingAsset.id.in_(asset_ids))
+                        )
+                    )
+                    if asset_ids
+                    else set()
+                )
+                missing = sorted(asset_ids - available)
+                return {
+                    **record(item),
+                    "missing_assets": missing,
+                    "images_omitted": bool(missing)
+                    and backup_omits(session, "images_through_snapshot", item.id),
+                    "images_cleaned": bool(missing)
+                    and removed_by_cleanup(session, "images", item.checked_at),
+                }
+
             return {
-                "snapshot": record(snapshot),
-                "previous": record(previous) if previous else None,
+                "snapshot": with_image_availability(snapshot),
+                "previous": with_image_availability(previous),
             }

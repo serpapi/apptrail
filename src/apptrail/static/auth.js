@@ -3,7 +3,31 @@ import { beginLoading, isLoading } from "./loading.js";
 const form = document.querySelector("#auth-form");
 const error = document.querySelector("#auth-error");
 const submit = document.querySelector("#auth-submit");
+const restoreForm = document.querySelector("#setup-restore-form");
+const restoreOption = document.querySelector("#setup-restore-option");
+const restoreError = document.querySelector("#setup-restore-error");
+const restoreSubmit = document.querySelector("#setup-restore-submit");
 let setup = false;
+function showRestore(open) {
+  if (!setup || isLoading(form) || isLoading(restoreForm)) return;
+  const from = open ? form : restoreForm;
+  const to = open ? restoreForm : form;
+  to.elements.setup_token.value = from.elements.setup_token.value;
+  form.hidden = open;
+  restoreOption.hidden = open;
+  restoreForm.hidden = !open;
+  document.querySelector("#auth-title").textContent = open
+    ? "Restore your data"
+    : "Create your account";
+  document.querySelector("#auth-description").textContent = open
+    ? "Recover your AppTrail workspace from a backup after an update or move."
+    : "Set up the owner account for this AppTrail workspace.";
+  document.title = (open ? "Restore your data" : "Create your account") + " · AppTrail";
+  if (open) restoreForm.elements.setup_token.focus();
+  else document.querySelector("#show-restore").focus();
+}
+document.querySelector("#show-restore").addEventListener("click", () => showRestore(true));
+document.querySelector("#cancel-restore").addEventListener("click", () => showRestore(false));
 async function load() {
   try {
     const response = await fetch("/api/auth/status", {
@@ -20,12 +44,16 @@ async function load() {
       return;
     }
     setup = state.setup_required;
+    restoreOption.hidden = !setup;
+    restoreForm.hidden = true;
     document.querySelector("#auth-title").textContent = setup
       ? "Create your account"
       : "Sign in to AppTrail";
     document.querySelector("#auth-description").textContent = setup
       ? "Set up the owner account for this AppTrail workspace."
-      : "Access your apps and search history.";
+      : new URLSearchParams(location.search).get("restored") === "1"
+        ? "Backup restored. Sign in with the username and password saved in that backup."
+        : "Access your apps and search history.";
     document.title =
       (setup ? "Create your account" : "Sign in") + " · AppTrail";
     for (const id of ["setup-fields", "confirm-field", "password-help"])
@@ -54,6 +82,8 @@ async function load() {
     submit.textContent = setup ? "Create account" : "Sign in";
     form.hidden = false;
   } catch (e) {
+    restoreOption.hidden = true;
+    restoreForm.hidden = true;
     error.textContent = e.message;
     form.hidden = false;
     submit.disabled = true;
@@ -98,6 +128,58 @@ form.addEventListener("submit", async (event) => {
   } finally {
     finishLoading();
     submit.textContent = setup ? "Create account" : "Sign in";
+  }
+});
+restoreForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!setup || isLoading(restoreForm) || restoreSubmit.disabled) return;
+  restoreError.textContent = "";
+  const file = restoreForm.elements.backup.files[0];
+  if (!file || !file.size || file.size > 2 * 1024 * 1024 * 1024) {
+    restoreError.textContent = "Choose a SQLite backup file of up to 2 GB.";
+    return;
+  }
+  if (!restoreForm.elements.confirm.checked) {
+    restoreError.textContent = "Confirm that the backup will overwrite current server data.";
+    return;
+  }
+  const setupToken = restoreForm.elements.setup_token.value.trim();
+  const finishLoading = beginLoading(restoreSubmit, restoreForm);
+  const controls = [...restoreForm.querySelectorAll("input, button")].filter((el) => !el.disabled);
+  controls.forEach((el) => { el.disabled = true; });
+  const status = document.querySelector("#setup-restore-status");
+  status.textContent = "Uploading, validating and restoring your backup. Keep this page open.";
+  restoreSubmit.textContent = "Restoring…";
+  try {
+    const response = await fetch("/api/auth/restore", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/vnd.sqlite3",
+        "X-AppTrail-Request": "1",
+        "X-AppTrail-Setup-Token": setupToken,
+        "X-AppTrail-Confirm-Restore": "overwrite",
+      },
+      body: file,
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 409) {
+        await load();
+        error.textContent = result.detail;
+        return;
+      }
+      throw new Error(result.detail || "Unable to restore the backup. Try again.");
+    }
+    localStorage.removeItem("apptrail-app");
+    location.replace("/login?restored=1");
+  } catch (e) {
+    restoreError.textContent = e.message;
+  } finally {
+    status.textContent = "";
+    controls.forEach((el) => { el.disabled = false; });
+    finishLoading();
+    restoreSubmit.textContent = "Restore backup";
   }
 });
 await load();

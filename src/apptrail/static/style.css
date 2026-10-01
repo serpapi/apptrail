@@ -2026,6 +2026,51 @@ tbody tr:hover {
 .settings-panel > .actions h2 {
   margin-bottom: 0;
 }
+.storage-total,
+.storage-category-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.storage-total {
+  margin: 24px 0 8px;
+}
+.storage-total dd {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.storage-category {
+  margin: 20px 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.storage-category-heading h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.storage-category-heading strong {
+  white-space: nowrap;
+}
+.storage-category p {
+  margin: 8px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.storage-controls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.storage-controls .field {
+  flex: 1 1 180px;
+  margin: 0;
+}
 .manage-listing-refresh {
   display: flex;
   align-items: center;
@@ -2094,6 +2139,45 @@ tbody tr:hover {
 .settings-panel > .backup-note {
   font-size: 10px;
   margin: 12px 0 0;
+}
+.backup-option + .backup-option {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 20px;
+}
+.backup-option h3 {
+  font-size: 13px;
+  margin-top: 16px;
+}
+.backup-option p {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 8px 0 14px;
+}
+.restore-warning {
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+  line-height: 1.6;
+}
+.restore-warning strong {
+  color: var(--red);
+}
+.restore-warning p {
+  margin-top: 8px;
+}
+.restore-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 20px 0;
+  line-height: 1.6;
+}
+.restore-confirm input {
+  flex-shrink: 0;
+  margin-top: 4px;
 }
 .credit-number {
   font-family: Manrope, sans-serif;

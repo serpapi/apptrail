@@ -24,9 +24,48 @@ The image supports Intel/AMD and ARM Linux and uses port `80`. If that port is a
 
 ### CapRover and Coolify
 
-Deploy `serpapi/apptrail:latest`. Mount persistent storage at `/data` and run one instance. Use the setup code in the application logs to create your owner account. If configuring a platform health check, use HTTP `/healthz`.
+Use the Docker Hub image `serpapi/apptrail:latest` and configure persistent storage at `/data` before the first deployment. AppTrail stores your account, history, and saved credentials there. Reusing this storage keeps your data when an update replaces the container. Run one instance.
 
-Account setup and login work behind the platform's HTTPS proxy without an origin setting or proxy IP configuration. Read [Public HTTPS hosting](#public-https-hosting) for optional forwarded-header settings.
+#### CapRover
+
+1. In **Apps**, create a new app named `apptrail` with **Has Persistent Data** checked.
+2. Open the app's **App Configs** and add a directory under **Persistent Directories**:
+
+   | Setting | Value |
+   |---|---|
+   | Path in App | `/data` |
+   | Label / Volume Name | `apptrail-data` |
+   | Set specific host path | Leave unchecked |
+
+3. Keep **Instance Count** at `1` and click **Save & Update** to save the storage configuration.
+4. Open **Deployment**, find **Deploy via ImageName**, enter `serpapi/apptrail:latest`, and click **Deploy**.
+
+CapRover manages the volume's location on the server. See [CapRover's persistent apps guide](https://caprover.com/docs/persistent-apps) for storage details.
+
+#### Coolify
+
+1. Open your project and environment, select **+ New**, then choose **Docker Image**.
+2. Enter `serpapi/apptrail` as **Image Name** and `latest` as **Tag**, then save to create the application.
+3. Before clicking **Deploy**, open **Configuration > Persistent Storage**, select **Add > Volume Mount**, and enter:
+
+   | Setting | Value |
+   |---|---|
+   | Name | `apptrail-data` |
+   | Source Path | Leave empty |
+   | Destination Path | `/data` |
+
+4. Click **Add** to save the mount. Leaving **Source Path** empty lets Docker manage a named volume.
+5. Configure your domain, keep the application on one server with one instance, then click **Deploy**.
+
+See [Coolify's persistent storage guide](https://coolify.io/docs/core/persistent-storage/storage-mounts/overview) and [volume mount instructions](https://coolify.io/docs/core/persistent-storage/storage-mounts/volume-mounts) for details.
+
+#### First setup and updates
+
+After deploying on either platform, use the one-time setup code in the application logs to create your owner account, then connect SerpApi. If configuring a platform health check, use HTTP `/healthz`. Account setup and login work behind the platform's HTTPS proxy without an origin setting or proxy IP configuration. Read [Public HTTPS hosting](#public-https-hosting) for optional forwarded-header settings.
+
+Before updating, open **Settings → Download SQLite backup** in AppTrail and save the SQLite database backup to your computer. Keep it so you can [restore your data](#backups-and-restoration) if the update causes issues.
+
+Then deploy `serpapi/apptrail:latest` again in the existing CapRover app or click **Redeploy** in the existing Coolify application. Keep the same volume mounted at `/data`; do not delete or recreate it. Your saved data persists across container replacement, though the app may briefly be unavailable while restarting.
 
 ## Build from source with Docker Compose
 
@@ -140,11 +179,25 @@ The worker retries transient failures up to three attempts with a delay. Final e
 
 The browser can close while tracking continues. If the process stops or the computer sleeps, checks pause. On restart, AppTrail queues current checks for overdue queries. It cannot recover past results from the time it was offline. Graceful shutdown waits for the current provider operation to finish; individual requests have a 90-second timeout. Compose allows six minutes for shutdown. Use `--stop-timeout 360` with `docker run` as well, since a Google Play check can fetch three pages. The CLI stops waiting for stalled HTTP responses after ten seconds before shutting down the worker.
 
+## Storage usage and cleanup
+
+In **Settings → Storage usage**, check the total database size and the space used by saved SerpApi responses and listing-history images. Each category has a one-time cleanup option for content older than **7 days** or **30 days**, with an estimate of the content eligible for deletion. Review the confirmation before deleting. Rankings, saved answers, matched evidence, listing text and image-change records are kept. Images shared with snapshots inside the selected period are also kept.
+
+Cleanup waits for active checks, deletes the selected older content, then compacts the database to return space to disk. Other requests may briefly show that cleanup is in progress. The history views explain when original responses or archived images were deleted. New checks continue saving both; cleanup does not set an automatic retention policy. The total includes SQLite's temporary journal but excludes separate backup files, which cleanup leaves untouched. Compaction needs temporary free disk space; if it cannot finish, AppTrail reports that the deleted pages remain available for SQLite to reuse.
+
 ## Backups and restoration
 
-Use **Settings → Download backup** to create a consistent SQLite snapshot while the app is running. The backup includes the owner account and password hash, apps, queries, jobs, account usage snapshots, and saved search history. Keep it private. It excludes login sessions, `credentials.json`, and environment secrets. Sign in again after restoring a downloaded backup.
+Use **Settings → Download SQLite backup** to create a consistent snapshot while the app is running. The backup includes the owner account and password hash, apps, competitors, queries, settings, jobs, account usage snapshots, saved rankings and answers, matched evidence, and listing text history. Keep it private. It excludes raw SerpApi responses, archived listing images, login sessions, `credentials.json`, and environment secrets. AppTrail compacts the copy after removing those records so the downloaded file uses less space. The running database is unchanged. **Export history CSV** downloads search results for spreadsheet analysis; CSV files cannot restore a workspace.
 
-To restore:
+Restored search details explain that original response data was omitted to save space. Listing comparisons show placeholders for omitted images and keep their hashes and change records, so future checks can still detect changes. New checks save responses and images normally. AppTrail does not fetch live images as substitutes for missing historical images. Automatic recovery and schema-upgrade backups preserve all available response data and images.
+
+Use **Settings → Restore from SQLite** to upload a compatible AppTrail backup of up to 2 GB. Schema versions 6 and 7 are supported; schema 6 is validated and upgraded in a temporary copy before restoration. Confirm the overwrite, then select **Overwrite and restore**. Invalid uploads leave your workspace and login intact.
+
+On a fresh installation without an owner account, select **Have a backup? Restore your data** below **Create account**. Use the setup code from the new server's terminal or container logs, then upload your backup. You can restore before creating another account and sign in with the credentials saved in the backup.
+
+Restoring overwrites all current server data, including the owner account, password, apps, settings, and history. AppTrail waits for active requests and background checks to finish, saves the current database in `backups/before-restore-*.sqlite3`, then replaces it. All sessions are revoked, including sessions in manually copied backups. Sign in with the username and password saved in the uploaded backup. The current server's SerpApi key is kept because it is stored outside SQLite. Restored schedules resume with that key.
+
+To restore a larger backup, upgrade an older backup through the startup migrations, or restore without signing in:
 
 1. Stop every AppTrail process using the destination directory.
 2. Move the existing data directory aside as a rollback copy.
@@ -156,7 +209,9 @@ For Docker, perform the same operation inside the named volume with the service 
 
 ## Updates
 
-Back up first. For an installation from Docker Hub, pull the new image and replace the container, reusing its data volume:
+Before any update, use **Settings → Download SQLite backup** in AppTrail to save a SQLite database backup to your computer. Keep it so you can [restore your data](#backups-and-restoration) if the update causes issues.
+
+For an installation from Docker Hub, pull the new image and replace the container, reusing its data volume:
 
 ```bash
 docker pull serpapi/apptrail:latest

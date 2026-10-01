@@ -22,6 +22,7 @@ class Worker:
         self.thread = None
 
     def start(self):
+        self.stop_event.clear()
         with self.db.session.begin() as session:
             for run in session.scalars(select(Run).where(Run.status.in_(["queued", "running"]))):
                 if reason := self.cancellation_reason(session, run):

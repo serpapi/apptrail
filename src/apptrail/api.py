@@ -16,9 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
-from . import __version__
+from . import __version__, storage
 from .auth import Auth
+from .backups import MAX_RESTORE_BYTES, RestoreGate, RestoreMiddleware, prepare_restore
 from .config import Config
 from .db import (
     App,
@@ -32,6 +34,7 @@ from .db import (
     Run,
     Setting,
     Target,
+    backup_omits,
     now,
 )
 from .engines import Gateway, ProviderError, apple_language, http_url
@@ -52,6 +55,12 @@ class Payload(BaseModel):
 
 class KeyInput(Payload):
     api_key: SecretStr
+
+
+class StorageCleanupInput(Payload):
+    kind: Literal["responses", "images"]
+    days: Literal[7, 30]
+    confirm: Literal[True]
 
 
 class ReplaceQueryInput(Payload):
@@ -192,6 +201,7 @@ def create_app(directory=None, *, start_worker=True, gateway_factory=Gateway):
         raise
     service = Service(db, config, gateway_factory)
     worker = Worker(service)
+    restore_gate = RestoreGate()
 
     @asynccontextmanager
     async def lifespan(app):
@@ -228,6 +238,8 @@ def create_app(directory=None, *, start_worker=True, gateway_factory=Gateway):
         )
         response.headers["Cache-Control"] = "no-store"
         return response
+
+    app.add_middleware(RestoreMiddleware, gate=restore_gate)
 
     @app.exception_handler(RequestValidationError)
     async def invalid(request, exc):
@@ -560,6 +572,13 @@ def create_app(directory=None, *, start_worker=True, gateway_factory=Gateway):
                 raise HTTPException(404, "Run not found.")
             return {
                 **record(item),
+                "responses_omitted": backup_omits(session, "responses_through_run", item.id)
+                and not item.responses,
+                "responses_cleaned": not item.responses
+                and item.status not in {"queued", "running"}
+                and storage.removed_by_cleanup(
+                    session, "responses", item.finished_at or item.started_at or item.created_at
+                ),
                 **(
                     {
                         "listing_snapshot_id": session.scalar(
@@ -648,17 +667,98 @@ def create_app(directory=None, *, start_worker=True, gateway_factory=Gateway):
             background=BackgroundTask(path.unlink, missing_ok=True),
         )
 
+    @app.get("/api/storage")
+    def storage_usage():
+        return storage.usage(db)
+
+    @app.post("/api/storage/cleanup")
+    def storage_cleanup(payload: StorageCleanupInput):
+        with restore_gate.exclusive(operation="Storage cleanup"):
+            running = worker.thread is not None and worker.thread.is_alive()
+            if running:
+                worker.stop()
+            try:
+                return storage.cleanup(db, payload.kind, payload.days)
+            finally:
+                if running:
+                    worker.start()
+
     @app.get("/api/backup")
     def backup():
         with tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False) as handle:
             path = Path(handle.name)
-        db.backup(path, include_sessions=False)
+        try:
+            db.backup(path, include_sessions=False, compact=True)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
         return FileResponse(
             path,
             filename="apptrail-backup.sqlite3",
             media_type="application/vnd.sqlite3",
             background=BackgroundTask(path.unlink, missing_ok=True),
         )
+
+    def replace_database(request, path):
+        with restore_gate.exclusive():
+            if request.url.path == "/api/auth/restore":
+                auth.authorize_setup_restore(request, throttle=False)
+            elif not auth.identify(request):
+                raise HTTPException(401, "Sign in to AppTrail again before restoring.")
+            running = worker.thread is not None and worker.thread.is_alive()
+            if running:
+                worker.stop()
+            try:
+                backups = config.directory / "backups"
+                backups.mkdir(exist_ok=True, mode=0o700)
+                with tempfile.NamedTemporaryFile(
+                    dir=backups, prefix="before-restore-", suffix=".sqlite3", delete=False
+                ) as handle:
+                    recovery = Path(handle.name)
+                try:
+                    db.backup(recovery, include_sessions=False)
+                except BaseException:
+                    recovery.unlink(missing_ok=True)
+                    raise
+                db.restore(path)
+                auth.setup_path.unlink(missing_ok=True)
+            finally:
+                if running:
+                    worker.start()
+
+    @app.post("/api/restore")
+    @app.post("/api/auth/restore")
+    async def restore(request: Request):
+        if request.url.path == "/api/auth/restore":
+            await run_in_threadpool(auth.authorize_setup_restore, request)
+        if request.headers.get("x-apptrail-confirm-restore") != "overwrite":
+            raise HTTPException(
+                422, "Confirm that the backup will overwrite all current server data."
+            )
+        if int(request.headers.get("content-length", "0")) > MAX_RESTORE_BYTES:
+            raise HTTPException(413, "SQLite backups must be 2 GB or smaller.")
+        with tempfile.TemporaryDirectory(prefix=".restore-", dir=config.directory) as directory:
+            staging = Path(directory)
+            upload = staging / "upload.sqlite3"
+            size = 0
+            with upload.open("wb") as handle:
+                upload.chmod(0o600)
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_RESTORE_BYTES:
+                        raise HTTPException(413, "SQLite backups must be 2 GB or smaller.")
+                    handle.write(chunk)
+            path = await run_in_threadpool(prepare_restore, upload, staging)
+            await run_in_threadpool(replace_database, request, path)
+        response = JSONResponse({"ok": True})
+        response.delete_cookie(
+            auth.cookie_name(request),
+            path="/",
+            secure=request.url.scheme == "https",
+            httponly=True,
+            samesite="strict",
+        )
+        return response
 
     static = Path(__file__).parent / "static"
     from .insights_api import register_insights

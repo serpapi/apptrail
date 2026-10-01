@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import tempfile
@@ -23,6 +24,8 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+
+SCHEMA_VERSION = 7
 
 
 def now() -> float:
@@ -197,6 +200,13 @@ class Setting(Base):
     value: Mapped[dict] = mapped_column(JSON)
 
 
+def backup_omits(session, key, item_id):
+    setting = session.get(Setting, "backup_omissions")
+    metadata = setting.value if setting and isinstance(setting.value, dict) else {}
+    cutoff = metadata.get(key)
+    return isinstance(cutoff, int) and item_id <= cutoff
+
+
 class Notification(Base):
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -297,11 +307,11 @@ class Database:
         with self.engine.begin() as connection:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
             version = connection.execute(text("PRAGMA user_version")).scalar()
-            if version > 7:
+            if version > SCHEMA_VERSION:
                 raise RuntimeError(
                     "This database needs a newer AppTrail version. Upgrade AppTrail."
                 )
-            if version and version < 7:
+            if version and version < SCHEMA_VERSION:
                 backups = directory / "backups"
                 backups.mkdir(exist_ok=True, mode=0o700)
                 with tempfile.NamedTemporaryFile(
@@ -408,7 +418,7 @@ class Database:
         self.path.chmod(0o600)
         self.session = sessionmaker(self.engine, expire_on_commit=False)
 
-    def backup(self, destination: Path, *, include_sessions=True):
+    def backup(self, destination: Path, *, include_sessions=True, compact=False):
         private_sqlite_file(destination)
         with (
             closing(sqlite3.connect(self.path)) as source,
@@ -417,8 +427,37 @@ class Database:
             source.backup(target)
             if not include_sessions:
                 target.execute("DELETE FROM login_sessions")
-                target.commit()
+            if compact:
+                target.execute("DELETE FROM listing_assets")
+                target.execute("UPDATE run_payloads SET responses='[]'")
+                target.execute("UPDATE runs SET responses='[]'")
+                omissions = {
+                    "responses_through_run": target.execute(
+                        "SELECT COALESCE(MAX(id), 0) FROM runs"
+                    ).fetchone()[0],
+                    "images_through_snapshot": target.execute(
+                        "SELECT COALESCE(MAX(id), 0) FROM listing_snapshots"
+                    ).fetchone()[0],
+                }
+                target.execute(
+                    "INSERT INTO settings (key, value) VALUES ('backup_omissions', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (json.dumps(omissions),),
+                )
+            target.commit()
+            if compact:
+                # Deleting rows alone leaves their pages in the downloaded file.
+                target.execute("VACUUM")
         destination.chmod(0o600)
 
     def close(self):
         self.engine.dispose()
+
+    def restore(self, source_path: Path):
+        # Call only after HTTP requests and the worker have finished using the database.
+        self.engine.dispose()
+        with (
+            closing(sqlite3.connect(source_path)) as source,
+            closing(sqlite3.connect(self.path)) as target,
+        ):
+            source.backup(target)

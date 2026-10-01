@@ -70,7 +70,11 @@ const sourceColors = {
 };
 let csrfToken = "",
   accountName = "",
+  restoring = false,
+  cleaningStorage = false,
   leaving = false;
+let storageUsage = null, storageError = "", storagePending = false;
+const storageDays = { responses: 7, images: 7 };
 let state,
   dashboard,
   charts = [],
@@ -216,7 +220,9 @@ async function api(path, options = {}) {
       "X-CSRF-Token": csrfToken,
       ...options.headers,
     },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body: options.body instanceof Blob
+      ? options.body
+      : options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   if (!response.ok) {
     if (response.status === 401 && path !== "auth/password") {
@@ -855,6 +861,124 @@ function activityPage() {
     }</tbody></table></div></div>`
   );
 }
+function storageBytes(value) {
+  if (value < 1024) return `${value} B`;
+  const unit = Math.min(Math.floor(Math.log(value) / Math.log(1024)), 3);
+  return `${(value / 1024 ** unit).toFixed(1)} ${["B", "KiB", "MiB", "GiB"][unit]}`;
+}
+function storagePanel() {
+  const rows = storageUsage ? [
+    ["responses", "Saved SerpApi responses", "Original response data used for search evidence. Saved results and matched evidence are kept."],
+    ["images", "Listing-history images", "Archived icons and screenshots. Images still used by newer snapshots are kept."],
+  ].map(([kind, title, description]) => {
+    const data = storageUsage[kind], days = storageDays[kind], eligible = data.older_than[days];
+    return `<div class="storage-category"><div class="storage-category-heading"><h3>${title}</h3><strong>${storageBytes(data.bytes)}</strong></div><p>${description}</p><div class="storage-controls"><label class="field"><span>Delete ${kind === "images" ? "images" : "responses"} older than</span><select class="input" data-storage-days="${kind}">${[7, 30].map(n => `<option value="${n}" ${n === days ? "selected" : ""}>${n} days</option>`).join("")}</select></label>${button("Delete older " + (kind === "images" ? "images" : "responses"), "cleanup-storage", "danger small", `data-kind="${kind}" ${eligible.count ? "" : "disabled"}`)}</div><small class="muted">${storageBytes(eligible.bytes)} eligible for deletion.</small></div>`;
+  }).join("") : `<p role="status">${storageError ? esc(storageError) : "Calculating storage usage…"}</p>`;
+  return `<section class="panel settings-panel" id="storage-panel"><div class="actions"><h2>Storage usage</h2>${button(icon("refresh") + " Refresh", "refresh-storage", "small", storagePending ? "disabled" : "")}</div>${storageUsage ? `<dl class="storage-total"><dt>Total database size</dt><dd>${storageBytes(storageUsage.total_bytes)}</dd></dl><p class="panel-subtitle">Includes saved data, indexes, free pages and ${storageBytes(storageUsage.journal_bytes)} of temporary database journal data. Separate backup files are excluded.</p>` : ""}${rows}<p class="panel-subtitle">Cleanup runs once when you confirm. It permanently deletes the selected older content and compacts the database to free disk space. New checks continue saving responses and images.</p></section>`;
+}
+function renderStorage() {
+  const panel = $("#storage-panel");
+  if (panel) panel.outerHTML = storagePanel();
+}
+async function loadStorage() {
+  if (storagePending || cleaningStorage || restoring) return;
+  storagePending = true;
+  storageError = "";
+  renderStorage();
+  try {
+    storageUsage = await api("storage");
+  } catch (error) {
+    storageUsage = null;
+    storageError = error.message;
+  } finally {
+    storagePending = false;
+    renderStorage();
+  }
+}
+function cleanupStorageDialog(kind) {
+  const days = storageDays[kind], label = kind === "images" ? "listing-history images" : "saved SerpApi responses";
+  showModal("Delete older " + (kind === "images" ? "images" : "responses"), "Free space in this workspace.",
+    `<form id="storage-cleanup-form" data-kind="${kind}" data-days="${days}"><p>Permanently delete ${label} older than ${days} days? About ${storageBytes(storageUsage[kind].older_than[days].bytes)} of content is eligible.</p><p>Saved rankings, answers, matched evidence and listing text will remain available.${kind === "images" ? " Images shared with newer snapshots will be kept." : ""}</p><p class="panel-subtitle">This cannot be undone. AppTrail waits for active checks, then compacts the database. Keep this page open until cleanup finishes.</p><p id="cleanup-status" role="status" class="panel-subtitle"></p><div class="form-footer">${button("Cancel", "close-modal")}<button class="button danger" type="submit">Delete older content</button></div></form>`);
+}
+async function cleanupStorage(form) {
+  cleaningStorage = true;
+  syncVersion++;
+  const controls = $$("button", modal).filter(el => !el.disabled);
+  controls.forEach(el => { el.disabled = true; });
+  $("#cleanup-status").textContent = "Waiting for active checks, deleting older content and compacting the database…";
+  try {
+    const result = await api("storage/cleanup", { method: "POST", body: {
+      kind: form.dataset.kind, days: Number(form.dataset.days), confirm: true,
+    } });
+    storageUsage = result.usage;
+    modal.close();
+    renderStorage();
+    toast(result.compacted ? `Deleted ${storageBytes(result.removed_bytes)} of older content. Database compacted.` : "Older content was deleted, but the database could not be compacted. Its freed pages can still be reused by new data.", !result.compacted);
+  } finally {
+    cleaningStorage = false;
+    controls.forEach(el => { el.disabled = false; });
+    if ($("#cleanup-status")) $("#cleanup-status").textContent = "";
+  }
+}
+document.addEventListener("change", event => {
+  const kind = event.target.dataset.storageDays;
+  if (!kind) return;
+  storageDays[kind] = Number(event.target.value);
+  renderStorage();
+  $(`[data-storage-days="${kind}"]`)?.focus();
+});
+function backupsPanel() {
+  return `<section class="panel settings-panel"><h2>Data & backups</h2>
+    <div class="backup-option"><h3>History CSV</h3><p>Export saved search results for spreadsheets and analysis. CSV files cannot restore your workspace and do not include account details or settings.</p><a class="button" href="/api/export.csv">${icon("download")} Export history CSV</a></div>
+    <div class="backup-option"><h3>SQLite backup</h3><p>Save your apps, competitors, queries, settings, rankings, saved answers and listing text history. Includes your account and saved password. Keep this file private.</p><a class="button" href="/api/backup">${icon("download")} Download SQLite backup</a><p>Raw SerpApi responses and listing-history images are omitted to keep backups small. Saved results, matched evidence and image-change records are kept. After restoring, omitted content is marked as unavailable.</p><p>Login sessions and your SerpApi key are not included. Your key is stored separately on the server.</p></div>
+    <div class="backup-option"><h3>Restore from SQLite</h3><p>Upload a compatible AppTrail backup to replace the current server data. Your account, password and app data will be reset to the uploaded backup. Everyone will be signed out.</p>${button("Restore from SQLite", "restore-backup", "danger")}<p>AppTrail validates the file before restoring and saves a recovery backup on the server. The server’s current SerpApi key is kept.</p></div>
+  </section>`;
+}
+function restoreBackupDialog() {
+  showModal(
+    "Restore from SQLite",
+    "Replace this server’s workspace with an AppTrail backup.",
+    `<form id="restore-backup-form">
+      <div class="restore-warning"><strong>This will overwrite all current server data.</strong><p>Your account, password, apps, settings and saved history will be reset to the uploaded backup. Everyone will be signed out. You will need the username and password saved in that backup to sign in again.</p></div>
+      <label class="field"><span>SQLite backup file</span><input class="input" type="file" name="backup" accept=".sqlite3,.sqlite,.db,application/vnd.sqlite3" aria-describedby="restore-help" required></label>
+      <p id="restore-help" class="panel-subtitle">Up to 2 GB. We check compatibility before changing any data and save a recovery backup on the server. The current SerpApi key is kept. Downloaded backups omit raw SerpApi responses and listing-history images to save space; saved results and text history are kept.</p>
+      <label class="restore-confirm"><input type="checkbox" name="confirm" required><span>I understand this will overwrite the current server data and reset the account password and app data to this backup.</span></label>
+      <p id="restore-status" class="panel-subtitle" role="status"></p>
+      <div class="form-footer"><button class="button" type="button" data-action="close-modal">Cancel</button><button class="button danger" type="submit">Overwrite and restore</button></div>
+    </form>`,
+  );
+}
+async function restoreBackup(form) {
+  const file = form.elements.backup.files[0];
+  if (!file || !file.size) throw new Error("Choose a SQLite backup file.");
+  if (file.size > 2 * 1024 * 1024 * 1024)
+    throw new Error("SQLite backups must be 2 GB or smaller.");
+  if (!form.elements.confirm.checked)
+    throw new Error("Confirm that the backup will overwrite all current server data.");
+  restoring = true;
+  syncVersion++;
+  const controls = $$("input, button", modal).filter((el) => !el.disabled);
+  controls.forEach((el) => { el.disabled = true; });
+  $("#restore-status").textContent = "Uploading, validating and restoring your backup. Waiting for active checks may take a few minutes. Keep this page open.";
+  try {
+    await api("restore", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/vnd.sqlite3",
+        "X-AppTrail-Confirm-Restore": "overwrite",
+      },
+      body: file,
+    });
+    leaving = true;
+    localStorage.removeItem("apptrail-app");
+    document.body.replaceChildren();
+    location.replace("/login?restored=1");
+  } finally {
+    restoring = false;
+    controls.forEach((el) => { el.disabled = false; });
+    if ($("#restore-status")) $("#restore-status").textContent = "";
+  }
+}
 function settingsPage() {
   const a = state.account?.data || {},
     estimate = state.estimated_monthly;
@@ -869,7 +993,7 @@ function settingsPage() {
     (state.onboarding?.completed.length === 3
       ? ""
       : `<section class="panel checklist-settings"><div><h2>Setup checklist</h2><p>Reopen the shortcuts for connecting an app and adding tracking queries.</p></div>${button("Show checklist", "restore-checklist", "small")}</section>`) +
-    `<div class="settings-grid"><div><section class="panel settings-panel"><h2>Your account</h2><p>Signed in as <strong>${esc(accountName)}</strong>.</p><form id="password-form"><label class="field"><span>Current password</span><input class="input" type="password" name="current_password" autocomplete="current-password" maxlength="128" required></label><label class="field"><span>New password</span><input class="input" type="password" name="new_password" autocomplete="new-password" minlength="8" maxlength="128" pattern="(?=.*[0-9])(?=.*[\\p{P}\\p{S}]).*" title="Use 8 to 128 characters, including a number and a special character." aria-describedby="new-password-help" required></label><label class="field"><span>Confirm new password</span><input class="input" type="password" name="confirm_password" autocomplete="new-password" minlength="8" maxlength="128" required></label><p id="new-password-help" class="panel-subtitle">Use 8 to 128 characters, including a number and a special character. Changing your password signs out other sessions.</p><div class="form-footer"><button class="button primary" type="submit">Change password</button></div></form></section><section class="panel settings-panel"><div class="actions"><h2>SerpApi connection</h2><span class="tag ${state.configured ? "good" : "neutral"}">${state.configured ? "Connected" : "Not connected"}</span></div><p>Connect SerpApi to check your app’s visibility.</p>${state.key_from_environment ? "" : `<form id="settings-key-form"><label class="field"><span>${state.configured ? "Replace API key" : "API key"}</span><input class="input" type="password" name="api_key" autocomplete="off" required placeholder="Your SerpApi API key"></label><div class="form-footer"><button class="button primary" type="submit">Connect and save</button></div></form>`}<a class="text-link" href="https://serpapi.com/manage-api-key" target="_blank" rel="noopener noreferrer">Find your SerpApi key ${icon("external")}</a></section><section class="panel settings-panel"><h2>Data & backups</h2><p>Download your search history or save a backup of your apps and settings.</p><div class="actions backup-actions"><a class="button" href="/api/export.csv">${icon("download")} Export history CSV</a><a class="button" href="/api/backup">${icon("download")} Download backup</a></div><p class="backup-note">Your SerpApi key is not included in backups.</p></section></div><div><section class="panel settings-panel"><div class="actions"><h2>Your search credits</h2><button class="icon-button" data-action="refresh-account" aria-label="Refresh account credits">${icon("refresh")}</button></div><div class="credit-number">${a.total_searches_left != null ? num(a.total_searches_left) : "—"}</div><div class="credit-caption">total searches remaining</div><dl class="definition"><dt>Plan</dt><dd>${esc(a.plan_name || "—")}</dd><dt>Used this month</dt><dd>${a.this_month_usage != null ? num(a.this_month_usage) : "—"}</dd><dt>Monthly allowance</dt><dd>${a.searches_per_month != null ? num(a.searches_per_month) : "—"}</dd><dt>Extra credits</dt><dd>${a.extra_credits != null ? num(a.extra_credits) : "—"}</dd><dt>Next renewal</dt><dd>${esc(a.plan_renewal_date || "Not applicable")}</dd><dt>Hourly limit</dt><dd>${a.account_rate_limit_per_hour != null ? num(a.account_rate_limit_per_hour) : "—"}</dd></dl><div class="separator"></div><div class="stat-title">Estimated AppTrail usage</div><div class="stat-value">${num(estimate.min)}${estimate.min !== estimate.max ? "–" + num(estimate.max) : ""}<small>/mo</small></div><p class="panel-subtitle">${state.sync_paused ? "Estimate for when workspace sync resumes. " : ""}Based on active queries and enabled listing histories. Discovery, retries, and manual checks are additional.</p><div class="separator"></div><small class="muted">Account-wide balance · Updated ${ago(state.account?.checked_at)}</small></section></div></div>`
+    `<div class="settings-grid"><div><section class="panel settings-panel"><h2>Your account</h2><p>Signed in as <strong>${esc(accountName)}</strong>.</p><form id="password-form"><label class="field"><span>Current password</span><input class="input" type="password" name="current_password" autocomplete="current-password" maxlength="128" required></label><label class="field"><span>New password</span><input class="input" type="password" name="new_password" autocomplete="new-password" minlength="8" maxlength="128" pattern="(?=.*[0-9])(?=.*[\\p{P}\\p{S}]).*" title="Use 8 to 128 characters, including a number and a special character." aria-describedby="new-password-help" required></label><label class="field"><span>Confirm new password</span><input class="input" type="password" name="confirm_password" autocomplete="new-password" minlength="8" maxlength="128" required></label><p id="new-password-help" class="panel-subtitle">Use 8 to 128 characters, including a number and a special character. Changing your password signs out other sessions.</p><div class="form-footer"><button class="button primary" type="submit">Change password</button></div></form></section><section class="panel settings-panel"><div class="actions"><h2>SerpApi connection</h2><span class="tag ${state.configured ? "good" : "neutral"}">${state.configured ? "Connected" : "Not connected"}</span></div><p>Connect SerpApi to check your app’s visibility.</p>${state.key_from_environment ? "" : `<form id="settings-key-form"><label class="field"><span>${state.configured ? "Replace API key" : "API key"}</span><input class="input" type="password" name="api_key" autocomplete="off" required placeholder="Your SerpApi API key"></label><div class="form-footer"><button class="button primary" type="submit">Connect and save</button></div></form>`}<a class="text-link" href="https://serpapi.com/manage-api-key" target="_blank" rel="noopener noreferrer">Find your SerpApi key ${icon("external")}</a></section>${storagePanel()}${backupsPanel()}</div><div><section class="panel settings-panel"><div class="actions"><h2>Your search credits</h2><button class="icon-button" data-action="refresh-account" aria-label="Refresh account credits">${icon("refresh")}</button></div><div class="credit-number">${a.total_searches_left != null ? num(a.total_searches_left) : "—"}</div><div class="credit-caption">total searches remaining</div><dl class="definition"><dt>Plan</dt><dd>${esc(a.plan_name || "—")}</dd><dt>Used this month</dt><dd>${a.this_month_usage != null ? num(a.this_month_usage) : "—"}</dd><dt>Monthly allowance</dt><dd>${a.searches_per_month != null ? num(a.searches_per_month) : "—"}</dd><dt>Extra credits</dt><dd>${a.extra_credits != null ? num(a.extra_credits) : "—"}</dd><dt>Next renewal</dt><dd>${esc(a.plan_renewal_date || "Not applicable")}</dd><dt>Hourly limit</dt><dd>${a.account_rate_limit_per_hour != null ? num(a.account_rate_limit_per_hour) : "—"}</dd></dl><div class="separator"></div><div class="stat-title">Estimated AppTrail usage</div><div class="stat-value">${num(estimate.min)}${estimate.min !== estimate.max ? "–" + num(estimate.max) : ""}<small>/mo</small></div><p class="panel-subtitle">${state.sync_paused ? "Estimate for when workspace sync resumes. " : ""}Based on active queries and enabled listing histories. Discovery, retries, and manual checks are additional.</p><div class="separator"></div><small class="muted">Account-wide balance · Updated ${ago(state.account?.checked_at)}</small></section></div></div>`
   );
 }
 function welcome() {
@@ -1191,6 +1315,7 @@ function render() {
     );
   });
   competitors.updateSummary();
+  if (route() === "settings" && !storageUsage && !storageError) void loadStorage();
 }
 function drawChart() {
   const canvas = $("#trend-chart");
@@ -1317,7 +1442,7 @@ document.addEventListener("input", (event) => {
 });
 document.addEventListener("reset", (event) => dirtyForms.delete(event.target));
 async function sync(silent = false) {
-  if (leaving || (silent && syncPending)) return;
+  if (leaving || restoring || cleaningStorage || (silent && syncPending)) return;
   const finishLoading = silent ? null : beginLoading();
   syncPending++;
   if (!silent) renderRequested = true;
@@ -1767,6 +1892,10 @@ async function showRun(id) {
       return;
     }
     let body = `<div class="run-meta">${statusTag(r.status)}<span class="tag neutral">${r.kind === "listing_history" ? "Listing history" : sourceLabels[r.params.source] || "Listing refresh"}</span><span class="tag neutral">${esc(countryName(r.params.country || "global"))}</span><span class="tag neutral">${when(r.started_at || r.created_at)}</span><span class="tag neutral">${r.requests_count} requests</span></div>${r.error ? `<div class="notice error">${esc(r.error)}</div>` : ""}${r.observations.map((o) => `<h3>${esc(appById(o.app_id)?.name || "Tracked app")}${o.retrospective ? " · Reanalyzed" : ""}</h3>${o.data.evidence?.map((e) => `<div class="evidence"><span class="tag good">${esc(e.type.replaceAll("_", " "))}</span> ${esc(e.text)}${e.url ? `<br><a class="text-link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">Open matching source ${icon("external")}</a>` : ""}</div>`).join("") || `<p class="panel-subtitle">No matching evidence in this check.${result.kind === "ai" ? " If the answer uses another name, add it as an alias in My apps → Manage, then reanalyze history." : ""}</p>`}`).join("")}`;
+    if (r.responses_omitted)
+      body = '<p class="notice backup-omission">Original SerpApi responses were omitted from this backup to save space. Saved results and matched evidence are still available.</p>' + body;
+    else if (r.responses_cleaned)
+      body = '<p class="notice storage-omission">Original SerpApi responses were deleted during storage cleanup. Saved results and matched evidence are still available.</p>' + body;
     if (result.kind === "ai")
       body += `<div class="separator"></div><h3>Saved answer</h3><div class="ai-answer">${esc(result.text || "No answer returned.")}</div><div class="references">${result.references.map((ref) => `<a class="reference" href="${esc(ref.link)}" target="_blank" rel="noopener noreferrer">${esc(ref.title)} ${icon("external")}<small>${esc(ref.link)}</small></a>`).join("")}</div>`;
     if (result.kind === "store")
@@ -1781,6 +1910,9 @@ async function showRun(id) {
   }
 }
 let profileChart;
+modal.addEventListener("cancel", (event) => {
+  if (restoring || cleaningStorage) event.preventDefault();
+});
 modal.addEventListener("close", () => {
   placeLoadingIndicator();
   profileChart?.destroy();
@@ -1900,6 +2032,14 @@ document.addEventListener("submit", async (event) => {
   const errorBox = $("#modal-error");
   if (errorBox) errorBox.textContent = "";
   try {
+    if (form.id === "restore-backup-form") {
+      await restoreBackup(form);
+      return;
+    }
+    if (form.id === "storage-cleanup-form") {
+      await cleanupStorage(form);
+      return;
+    }
     if (await competitors.submit(form)) return;
     if (await insights.submit(form)) return;
     if (form.id === "query-group-form") {
@@ -2023,10 +2163,22 @@ document.addEventListener("submit", async (event) => {
 });
 document.addEventListener("click", async (event) => {
   const el = event.target.closest("[data-action]");
-  if (!el || el.disabled || isLoading(el)) return;
+  if (!el || el.disabled || isLoading(el) || restoring || cleaningStorage) return;
   const action = el.dataset.action;
   const finishLoading = beginLoading(el);
   try {
+    if (action === "refresh-storage") {
+      await loadStorage();
+      return;
+    }
+    if (action === "cleanup-storage") {
+      cleanupStorageDialog(el.dataset.kind);
+      return;
+    }
+    if (action === "restore-backup") {
+      restoreBackupDialog();
+      return;
+    }
     if (competitors.click(el)) return;
     if (await insights.click(el)) return;
     if (
@@ -2587,6 +2739,7 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("scroll", hideControlHint, true);
 window.addEventListener("resize", hideControlHint);
 window.addEventListener("hashchange", () => {
+  if (route() === "settings") { storageUsage = null; storageError = ""; }
   setNavigation(false);
   sync();
 });

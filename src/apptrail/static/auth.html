@@ -83,6 +83,41 @@
           <code>apptrail --reset-password</code>.
         </p>
       </form>
+      <div id="setup-restore-option" hidden>
+        <button class="auth-secondary" id="show-restore" type="button">
+          Have a backup? Restore your data
+        </button>
+      </div>
+      <form id="setup-restore-form" hidden>
+        <label class="field"
+          ><span>Setup code</span
+          ><input
+            class="input"
+            name="setup_token"
+            autocomplete="off"
+            maxlength="200"
+            aria-describedby="restore-setup-help"
+            required
+        /></label>
+        <p id="restore-setup-help" class="auth-help">Use the one-time code from this server’s terminal or container logs.</p>
+        <label class="field"
+          ><span>SQLite backup file</span
+          ><input
+            class="input"
+            type="file"
+            name="backup"
+            accept=".sqlite3,.sqlite,.db,application/vnd.sqlite3"
+            aria-describedby="restore-file-help"
+            required
+        /></label>
+        <p id="restore-file-help" class="auth-help">Upload a compatible AppTrail SQLite backup, up to 2 GB. We validate it before restoring. Downloaded backups omit raw SerpApi responses and listing-history images to save space. Saved results and text history are kept. Your SerpApi key is stored separately; reconnect it after signing in if needed.</p>
+        <div class="restore-warning"><strong>This will overwrite any current server data.</strong><p>Your account, password, apps and history will be reset to the uploaded backup. You will need the username and password saved in that backup to sign in.</p></div>
+        <label class="restore-confirm"><input type="checkbox" name="confirm" required><span>I understand this replaces the current server data and restores the account password and app data from the backup.</span></label>
+        <p id="setup-restore-error" class="error-message" role="alert"></p>
+        <p id="setup-restore-status" class="auth-help" role="status"></p>
+        <button class="button primary" id="setup-restore-submit" type="submit">Restore backup</button>
+        <button class="auth-secondary" id="cancel-restore" type="button">Back to account setup</button>
+      </form>
       <noscript>Enable JavaScript to sign in to AppTrail.</noscript>
     </main>
   </body>

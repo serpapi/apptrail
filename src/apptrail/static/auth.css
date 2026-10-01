@@ -36,11 +36,14 @@
   color: var(--muted);
   margin: -4px 0 20px;
 }
-#auth-submit {
+#auth-submit,
+#setup-restore-submit {
   width: 100%;
   min-height: 44px;
 }
-#auth-error:empty {
+#auth-error:empty,
+#setup-restore-error:empty,
+#setup-restore-status:empty {
   display: none;
 }
 #auth-error {
@@ -48,6 +51,33 @@
 }
 #auth-recovery {
   margin: 20px 0 0;
+}
+.auth-secondary {
+  display: block;
+  margin: 20px auto 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: center;
+}
+.auth-secondary:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.auth-secondary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+#setup-restore-form .restore-warning,
+#setup-restore-form .restore-confirm {
+  font-size: 12px;
+}
+#setup-restore-error {
+  margin-bottom: 16px;
 }
 .auth-help code {
   overflow-wrap: anywhere;

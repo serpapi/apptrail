@@ -21,7 +21,7 @@ from .db import AuthLimit, LoginSession, Owner, now
 
 SESSION_SECONDS = 24 * 3600
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-PUBLIC_API = {"/api/auth/status", "/api/auth/setup", "/api/auth/login"}
+PUBLIC_API = {"/api/auth/status", "/api/auth/setup", "/api/auth/login", "/api/auth/restore"}
 PUBLIC_FILES = {
     "/login",
     "/healthz",
@@ -103,6 +103,22 @@ class Auth:
 
     def setup_token(self):
         return self.setup_path.read_text().strip() if self.setup_path.exists() else ""
+
+    def require_setup_token(self, supplied):
+        expected = self.setup_token()
+        if not expected or not secrets.compare_digest(expected.encode(), supplied.encode()):
+            raise HTTPException(
+                403, "The setup code is incorrect. Use the code from the server terminal."
+            )
+
+    def authorize_setup_restore(self, request, *, throttle=True):
+        if throttle:
+            self.limit(request)
+        if self.has_owner():
+            raise HTTPException(
+                409, "An account already exists. Sign in and restore from Settings."
+            )
+        self.require_setup_token(request.headers.get("x-apptrail-setup-token", ""))
 
     def limit(self, request):
         ip = request.client.host if request.client else "unknown"
@@ -222,15 +238,17 @@ class Auth:
                 return RedirectResponse("/login", status_code=303)
             return JSONResponse({"detail": "Sign in to AppTrail."}, status_code=401)
         if request.method not in SAFE_METHODS:
-            if (
-                request.headers.get("x-apptrail-request") != "1"
-                or request.headers.get("content-type", "").split(";")[0] != "application/json"
-            ):
+            content_type = request.headers.get("content-type", "").split(";")[0]
+            allowed_type = content_type == "application/json" or (
+                path in {"/api/restore", "/api/auth/restore"}
+                and content_type == "application/vnd.sqlite3"
+            )
+            if request.headers.get("x-apptrail-request") != "1" or not allowed_type:
                 return JSONResponse(
-                    {"detail": "Use the AppTrail interface or authenticated JSON requests."},
+                    {"detail": "Use the AppTrail interface or authenticated API requests."},
                     status_code=403,
                 )
-            if path not in {"/api/auth/setup", "/api/auth/login"}:
+            if path not in {"/api/auth/setup", "/api/auth/login", "/api/auth/restore"}:
                 supplied = request.headers.get("x-csrf-token", "")
                 expected = (request.state.auth or {}).get("csrf_token", "")
                 if not expected or not secrets.compare_digest(supplied.encode(), expected.encode()):
@@ -272,13 +290,7 @@ class Auth:
                 session.execute(text("BEGIN IMMEDIATE"))
                 if session.get(Owner, 1):
                     raise HTTPException(409, "An account already exists. Sign in instead.")
-                expected = self.setup_token()
-                if not expected or not secrets.compare_digest(
-                    expected.encode(), payload.setup_token.get_secret_value().encode()
-                ):
-                    raise HTTPException(
-                        403, "The setup code is incorrect. Use the code from the server terminal."
-                    )
+                self.require_setup_token(payload.setup_token.get_secret_value())
                 owner = Owner(
                     id=1,
                     username=payload.username.lower(),

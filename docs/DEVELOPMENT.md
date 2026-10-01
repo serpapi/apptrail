@@ -28,6 +28,8 @@ Charts use the bundled Chart.js 4.4.9 distribution in `static/vendor/chart.umd.m
 | `src/apptrail/cli.py` | Console command, free-port binding, browser launch |
 | `src/apptrail/api.py` | FastAPI routes and input validation |
 | `src/apptrail/auth.py` | Owner setup, password hashing, session validation, CSRF, and login throttling |
+| `src/apptrail/backups.py` | Restore validation, schema compatibility, and exclusion of concurrent database users during restore |
+| `src/apptrail/storage.py` | Storage measurements, age-based response and image cleanup, and database compaction |
 | `src/apptrail/config.py` | Data directory and credentials |
 | `src/apptrail/db.py` | SQLAlchemy models and numbered SQLite schema migrations |
 | `src/apptrail/engines.py` | Official SerpApi SDK requests and source normalization |
@@ -92,6 +94,10 @@ The separate live workflow runs on the same events and can be started manually. 
 `PRAGMA user_version` records the schema version. Keep existing migration steps stable and add a numbered step for each schema change. Test upgrades from an older database as well as a clean database. Make a backup before upgrading a deployed workspace.
 
 SQLite uses WAL mode, foreign keys, and a busy timeout. Partial unique indexes prevent duplicate queued/running jobs for the same query or listing. A process lock allows one active AppTrail worker per data directory. Do not run multiple Uvicorn workers against the same workspace.
+
+Downloaded backups call `Database.backup(compact=True, include_sessions=False)` to remove raw response JSON, archived image blobs, and sessions from the copy, then run `VACUUM` on that copy. Normalized results and snapshot image hashes remain. The `backup_omissions` setting records the last affected run and snapshot IDs so restored views can explain missing content without labelling new checks as incomplete. Internal recovery and migration snapshots use full backups. Restore supports the current schema and schema 6, whose image comparison upgrade does not change the table layout.
+
+Storage cleanup uses the same request gate as restore and stops the worker before deleting content and running `VACUUM` plus a WAL checkpoint. It only clears responses for completed runs before the selected cutoff. Image age comes from the latest snapshot reference across every media field, so deduplicated assets used by newer snapshots survive. Unreferenced assets are also removed. The `storage_cleanup` setting records each category's cutoff for missing-content notices. Measurements read blob and JSON byte lengths without loading their contents into Python; snapshot media references are indexed in a temporary table for shared-image checks.
 
 Schema 4 stores normalized results and provider responses in `run_payloads`, separate from the small `runs` records used for polling and scheduling. Load payloads only for evidence, matching, or reanalysis. State and dashboard queries must not fetch them. The upgrade preserves a snapshot in `backups/before-schema-3.sqlite3` before moving existing payloads.
 
