@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 from contextlib import closing, contextmanager
@@ -10,6 +11,7 @@ from argon2.exceptions import InvalidHashError
 from fastapi import HTTPException
 from starlette.responses import JSONResponse
 
+from .auth import USERNAME_PATTERN
 from .db import SCHEMA_VERSION, Database, now
 
 MAX_RESTORE_BYTES = 2 * 1024 * 1024 * 1024
@@ -137,6 +139,13 @@ def prepare_restore(upload: Path, directory: Path) -> Path:
             owners = target.execute("SELECT id, username, password_hash FROM owner").fetchall()
             if len(owners) != 1 or owners[0][0] != 1 or not owners[0][1]:
                 raise ValueError("The backup must contain an AppTrail owner account.")
+            username = owners[0][1]
+            if (
+                not isinstance(username, str)
+                or not re.fullmatch(USERNAME_PATTERN, username)
+                or username != username.lower()
+            ):
+                raise ValueError("The backup contains an invalid account username.")
             try:
                 parameters = extract_parameters(owners[0][2])
                 if not (

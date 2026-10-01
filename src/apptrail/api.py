@@ -34,8 +34,8 @@ from .db import (
     Run,
     Setting,
     Target,
-    backup_omits,
     now,
+    response_removal_reason,
 )
 from .engines import Gateway, ProviderError, apple_language, http_url
 from .matching import match_app
@@ -570,15 +570,11 @@ def create_app(directory=None, *, start_worker=True, gateway_factory=Gateway):
             item = session.get(Run, run_id)
             if not item:
                 raise HTTPException(404, "Run not found.")
+            removal_reason = response_removal_reason(session, item)
             return {
                 **record(item),
-                "responses_omitted": backup_omits(session, "responses_through_run", item.id)
-                and not item.responses,
-                "responses_cleaned": not item.responses
-                and item.status not in {"queued", "running"}
-                and storage.removed_by_cleanup(
-                    session, "responses", item.finished_at or item.started_at or item.created_at
-                ),
+                "responses_omitted": removal_reason == "backup",
+                "responses_cleaned": removal_reason == "cleanup",
                 **(
                     {
                         "listing_snapshot_id": session.scalar(

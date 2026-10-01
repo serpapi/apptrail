@@ -4,11 +4,13 @@ import json
 import sqlite3
 from contextlib import closing
 
-from .db import Setting, now
+from .db import Setting, clear_responses, now
 
 RUN_TIME = "COALESCE(finished_at, started_at, created_at)"
 FINISHED = "status NOT IN ('queued', 'running')"
-RESPONSE_BYTES = "CASE WHEN responses != '[]' THEN length(CAST(responses AS BLOB)) ELSE 0 END"
+RESPONSE_BYTES = (
+    "CASE WHEN json_array_length(responses) > 0 THEN length(CAST(responses AS BLOB)) ELSE 0 END"
+)
 
 
 def removed_by_cleanup(session, kind, checked_at):
@@ -104,12 +106,7 @@ def cleanup(db, kind, days):
         if kind == "responses":
             size, count = response_usage(connection, cutoff)
             condition = f"{FINISHED} AND {RUN_TIME} < ?"
-            connection.execute(
-                f"UPDATE run_payloads SET responses='[]' WHERE run_id IN "
-                f"(SELECT id FROM runs WHERE {condition})",
-                (cutoff,),
-            )
-            connection.execute(f"UPDATE runs SET responses='[]' WHERE {condition}", (cutoff,))
+            clear_responses(connection, "cleanup", condition=condition, parameters=(cutoff,))
         else:
             image_references(connection)
             size, count = image_usage(connection, cutoff)

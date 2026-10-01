@@ -245,6 +245,36 @@ def test_incompatible_backup_is_rejected_before_changes(client, tracked, tmp_pat
     assert not list(tmp_path.glob("backups/before-restore-*"))
 
 
+@pytest.mark.parametrize("username", ["Owner", "a" * 65, b"owner", "ab", "bad name", "owner\n"])
+@pytest.mark.parametrize("setup", [False, True])
+def test_restore_rejects_unusable_usernames(
+    client, tracked, fresh_workspace, tmp_path, username, setup
+):
+    content = changed_backup(client, tmp_path, "UPDATE owner SET username=?", (username,))
+    if setup:
+        response = fresh_workspace.post("/api/auth/restore", content=content)
+        assert response.status_code == 422, response.text
+        assert fresh_workspace.get("/api/auth/status").json()["setup_required"]
+        assert fresh_workspace.app.state.auth.setup_token()
+    else:
+        response = restore(client, content)
+        assert response.status_code == 422, response.text
+        assert client.get("/api/state").json()["apps"][0]["id"] == tracked
+        assert not list(tmp_path.glob("backups/before-restore-*"))
+        client.cookies.clear()
+        sign_in(client)
+    assert "username" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("username", ["a.b_c-1", "a" * 64])
+def test_restored_canonical_username_can_sign_in(client, tmp_path, username):
+    content = changed_backup(client, tmp_path, "UPDATE owner SET username=?", (username,))
+    response = restore(client, content)
+    assert response.status_code == 200, response.text
+    sign_in(client, username=username.upper())
+    assert client.get("/api/auth/status").json()["username"] == username
+
+
 @pytest.mark.parametrize(
     "headers,status",
     [
@@ -336,8 +366,11 @@ def test_compact_backup_shrinks_file_and_restores_history_with_omission_notices(
         omitted = json.loads(
             saved.execute("SELECT value FROM settings WHERE key='backup_omissions'").fetchone()[0]
         )
-        assert omitted["responses_through_run"] == new_run
         assert omitted["images_through_snapshot"] == after["id"]
+    assert restore(client, again.read_bytes()).status_code == 200
+    sign_in(client)
+    assert client.get(f"/api/runs/{new_run}").json()["responses_omitted"]
+    assert client.get(f"/api/runs/{run_id}").json()["responses_omitted"]
 
 
 def test_missing_image_without_backup_marker_is_not_mislabelled(client, tracked, listing_images):
@@ -349,6 +382,29 @@ def test_missing_image_without_backup_marker_is_not_mislabelled(client, tracked,
     saved = client.get(f"/api/listing-snapshots/{baseline['id']}").json()["snapshot"]
     assert asset_id in saved["missing_assets"]
     assert not saved["images_omitted"]
+
+
+def test_legacy_removal_cutoffs_do_not_guess_why_a_response_is_missing(client, tmp_path):
+    db = client.app.state.service.db
+    with db.session.begin() as session:
+        run = Run(status="error", error="Provider returned no response")
+        session.add(run)
+        session.flush()
+        run_id = run.id
+        session.merge(Setting(key="backup_omissions", value={"responses_through_run": run_id}))
+        session.merge(Setting(key="storage_cleanup", value={"responses": run.created_at + 1}))
+    legacy = tmp_path / "legacy-omissions.sqlite3"
+    db.backup(legacy)
+    content = legacy.read_bytes()
+    for _ in range(2):
+        assert restore(client, content).status_code == 200
+        sign_in(client)
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["responses"] == []
+        assert not saved["responses_omitted"] and not saved["responses_cleaned"]
+        content = client.get("/api/backup").content
 
 
 def test_schema_six_backup_upgrades_in_staging(client, tracked, listing_images, tmp_path):

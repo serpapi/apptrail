@@ -20,6 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from .db import AuthLimit, LoginSession, Owner, now
 
 SESSION_SECONDS = 24 * 3600
+USERNAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 PUBLIC_API = {"/api/auth/status", "/api/auth/setup", "/api/auth/login", "/api/auth/restore"}
 PUBLIC_FILES = {
@@ -71,7 +72,7 @@ class LoginInput(BaseModel):
 
 
 class SetupInput(LoginInput):
-    username: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$")
+    username: str = Field(pattern=USERNAME_PATTERN)
     setup_token: SecretStr = Field(min_length=1, max_length=200)
 
 

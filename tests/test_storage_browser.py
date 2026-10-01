@@ -40,8 +40,28 @@ def test_storage_controls_cleanup_and_history_notices(
     responses.select_option("30")
     panel.get_by_role("button", name="Delete older responses", exact=True).click()
     expect(page.locator("#modal")).to_contain_text("older than 30 days")
+    cleanup_requests = []
+    page.on(
+        "request",
+        lambda request: (
+            cleanup_requests.append(request)
+            if request.url.endswith("/api/storage/cleanup")
+            else None
+        ),
+    )
+    page.locator("#storage-cleanup-form").evaluate(
+        """form => {
+            window.cleanupSubmissions = 0;
+            form.addEventListener('submit', () => window.cleanupSubmissions++);
+        }"""
+    )
     page.get_by_role("button", name="Cancel", exact=True).click()
-    assert client.get(f"/api/runs/{stored_history['runs'][40]}").json()["responses"]
+    expect(page.locator("#modal")).not_to_be_visible()
+    assert page.evaluate("window.cleanupSubmissions") == 0
+    assert cleanup_requests == []
+    saved = client.get(f"/api/runs/{stored_history['runs'][40]}")
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["responses"]
     responses.select_option("7")
     panel.get_by_role("button", name="Delete older responses", exact=True).click()
     expect(page.locator("#modal")).to_contain_text("older than 7 days")

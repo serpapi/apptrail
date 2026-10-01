@@ -5,11 +5,14 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 
 import pytest
+from conftest import FakeGateway, add_monitor, sign_in
 from sqlalchemy import select
+from test_backups import restore
 from test_insights import watch
 
 from apptrail import storage
 from apptrail.db import ListingAsset, ListingSnapshot, Observation, Run, now
+from apptrail.engines import ProviderError
 
 
 def asset_id(name):
@@ -176,6 +179,44 @@ def test_legacy_responses_and_cleanup_marker_survive_different_cutoffs(client, s
         assert session.get(Run, stored_history["runs"][10]).legacy_responses == []
     clean(client, days=30)
     assert client.get(f"/api/runs/{stored_history['runs'][10]}").json()["responses_cleaned"]
+
+
+def test_response_removal_notices_only_identify_content_actually_removed(client, stored_history):
+    app_id = client.get("/api/state").json()["apps"][0]["id"]
+    monitor_id = add_monitor(client, app_id)
+    FakeGateway.failures = [ProviderError("Provider returned no response", retryable=False)]
+    while client.app.state.worker.process_one():
+        pass
+    db = client.app.state.service.db
+    with db.session.begin() as session:
+        failed = session.scalar(select(Run).where(Run.monitor_id == monitor_id))
+        assert failed.status == "error" and failed.responses == []
+        failed.finished_at = stored_history["timestamp"] - 40 * 86400
+        failed_id = failed.id
+    cleaned_id = stored_history["runs"][40]
+    omitted_id = stored_history["runs"][3]
+    clean(client)
+
+    def check_notices(run_id, *, cleaned=False, omitted=False):
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200, response.text
+        run = response.json()
+        assert run["responses_cleaned"] is cleaned
+        assert run["responses_omitted"] is omitted
+
+    check_notices(failed_id)
+    check_notices(cleaned_id, cleaned=True)
+    check_notices(omitted_id)
+    for _ in range(2):
+        content = client.get("/api/backup").content
+        assert restore(client, content).status_code == 200
+        sign_in(client)
+        check_notices(failed_id)
+        check_notices(cleaned_id, cleaned=True)
+        check_notices(omitted_id, omitted=True)
+        clean(client, days=30)
+        check_notices(failed_id)
+        check_notices(cleaned_id, cleaned=True)
 
 
 @pytest.mark.parametrize(

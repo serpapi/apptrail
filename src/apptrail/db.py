@@ -207,6 +207,34 @@ def backup_omits(session, key, item_id):
     return isinstance(cutoff, int) and item_id <= cutoff
 
 
+def response_removal_reason(session, run):
+    setting = session.get(Setting, f"response_removal:{run.id}")
+    metadata = setting.value if setting and isinstance(setting.value, dict) else {}
+    if not run.responses and metadata.get("created_at_us") == int(run.created_at * 1_000_000):
+        return metadata.get("reason")
+    return None
+
+
+def clear_responses(connection, reason, *, condition="1", parameters=()):
+    # Record only runs with saved content, in the same transaction as its removal.
+    connection.execute(
+        "INSERT INTO settings (key, value) "
+        "SELECT 'response_removal:' || id, "
+        "json_object('reason', ?, 'created_at_us', CAST(created_at * 1000000 AS INTEGER)) "
+        "FROM runs "
+        f"WHERE ({condition}) AND (json_array_length(responses) > 0 OR id IN "
+        "(SELECT run_id FROM run_payloads WHERE json_array_length(responses) > 0)) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (reason, *parameters),
+    )
+    connection.execute(
+        "UPDATE run_payloads SET responses='[]' WHERE run_id IN "
+        f"(SELECT id FROM runs WHERE {condition})",
+        parameters,
+    )
+    connection.execute(f"UPDATE runs SET responses='[]' WHERE {condition}", parameters)
+
+
 class Notification(Base):
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -429,12 +457,8 @@ class Database:
                 target.execute("DELETE FROM login_sessions")
             if compact:
                 target.execute("DELETE FROM listing_assets")
-                target.execute("UPDATE run_payloads SET responses='[]'")
-                target.execute("UPDATE runs SET responses='[]'")
+                clear_responses(target, "backup")
                 omissions = {
-                    "responses_through_run": target.execute(
-                        "SELECT COALESCE(MAX(id), 0) FROM runs"
-                    ).fetchone()[0],
                     "images_through_snapshot": target.execute(
                         "SELECT COALESCE(MAX(id), 0) FROM listing_snapshots"
                     ).fetchone()[0],
